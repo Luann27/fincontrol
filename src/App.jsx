@@ -952,47 +952,52 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
 
 // ─── NAV & APP ────────────────────────────────────────────────────────────────
 const NAV = [
-  { id: "dashboard",     label: "Início",     icon: "◈" },
-  { id: "transacoes",    label: "Transações", icon: "⇄" },
-  { id: "patrimonio",    label: "Patrimônio", icon: "▲" },
-  { id: "investimentos", label: "Carteira",   icon: "◆" },
-  { id: "swing",         label: "Swing",      icon: "⟡" },
-  { id: "relatorios",    label: "Relatórios", icon: "≡" },
-  { id: "config",        label: "Config.",    icon: "⚙" },
+  { id: "dashboard",     label: "Início",      icon: "◈", desc: "Visão geral" },
+  { id: "transacoes",    label: "Transações",  icon: "⇄", desc: "Receitas e despesas" },
+  { id: "patrimonio",    label: "Patrimônio",  icon: "▲", desc: "Evolução patrimonial" },
+  { id: "investimentos", label: "Carteira",    icon: "◆", desc: "Ações e ativos" },
+  { id: "swing",         label: "Swing Trade", icon: "⟡", desc: "Operações" },
+  { id: "relatorios",    label: "Relatórios",  icon: "≡", desc: "Análises" },
+  { id: "config",        label: "Configurações", icon: "⚙", desc: "Contas e categorias" },
 ];
 
-export default function App() {
-  const [screen, setScreen]           = useState("dashboard");
-  const [transacoes, setTransacoes]   = useState([]);
-  const [contas, setContas]           = useState([]);
-  const [ativos, setAtivos]           = useState([]);
-  const [swings, setSwings]           = useState([]);
-  const [cats, setCats]               = useState(DEFAULT_CATS);
-  const [loading, setLoading]         = useState(true);
-  const [syncing, setSyncing]         = useState(false);
+// Hook para detectar se é PC (largura > 768px)
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 768);
+  useEffect(() => {
+    const fn = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  return isDesktop;
+}
 
-  // Carrega tudo do Supabase na inicialização
+export default function App() {
+  const [screen, setScreen]         = useState("dashboard");
+  const [transacoes, setTransacoes] = useState([]);
+  const [contas, setContas]         = useState([]);
+  const [ativos, setAtivos]         = useState([]);
+  const [swings, setSwings]         = useState([]);
+  const [cats, setCats]             = useState(DEFAULT_CATS);
+  const [loading, setLoading]       = useState(true);
+  const isDesktop                   = useIsDesktop();
+
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
       const [t, c, a, s, ct] = await Promise.all([
-        db.get("transacoes"),
-        db.get("contas"),
-        db.get("ativos"),
-        db.get("swings"),
-        db.get("cats"),
+        db.get("transacoes"), db.get("contas"), db.get("ativos"),
+        db.get("swings"), db.get("cats"),
       ]);
       setTransacoes(t || []);
       setContas(c || []);
       setAtivos(a || []);
       setSwings(s || []);
-      // Reconstrói cats do banco
       if (ct && ct.length > 0) {
         const rebuilt = { rec: [], desp: [] };
         ct.forEach(row => {
-          const tipo = row.tipo;
-          if (tipo === "rec" || tipo === "desp") {
-            rebuilt[tipo].push({ id: row.id, nome: row.nome, subs: Array.isArray(row.subs) ? row.subs : (typeof row.subs === "string" ? JSON.parse(row.subs) : []) });
+          if (row.tipo === "rec" || row.tipo === "desp") {
+            rebuilt[row.tipo].push({ id: row.id, nome: row.nome, subs: Array.isArray(row.subs) ? row.subs : (typeof row.subs === "string" ? JSON.parse(row.subs) : []) });
           }
         });
         if (rebuilt.rec.length > 0 || rebuilt.desp.length > 0) setCats(rebuilt);
@@ -1002,13 +1007,137 @@ export default function App() {
     fetchAll();
   }, []);
 
-  const cur = NAV.find(n => n.id === screen);
+  const cur   = NAV.find(n => n.id === screen);
   const props = { transacoes, contas, ativos, swings, cats, loading };
 
-  return (
-    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'Outfit','DM Sans',sans-serif", color: C.text, display: "flex", flexDirection: "column", maxWidth: 640, margin: "0 auto", position: "relative" }}>
+  const renderScreen = () => {
+    switch(screen) {
+      case "dashboard":     return <Dashboard     {...props} />;
+      case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes} />;
+      case "patrimonio":    return <Patrimonio    {...props} />;
+      case "investimentos": return <Investimentos {...props} setAtivos={setAtivos} />;
+      case "swing":         return <SwingTrade    {...props} setSwings={setSwings} />;
+      case "relatorios":    return <Relatorios    {...props} />;
+      case "config":        return <Configuracoes {...props} setCats={setCats} setContas={setContas} />;
+      default:              return <Dashboard     {...props} />;
+    }
+  };
 
-      {/* Top Bar */}
+  // ── DESKTOP LAYOUT ──
+  if (isDesktop) return (
+    <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'Outfit','DM Sans',sans-serif", color: C.text, overflow: "hidden" }}>
+
+      {/* Sidebar */}
+      <div style={{ width: 240, background: C.surface, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}>
+
+        {/* Logo */}
+        <div style={{ padding: "24px 20px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, background: `linear-gradient(135deg, ${C.accent}, ${C.blue})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, flexShrink: 0 }}>₿</div>
+            <div>
+              <div style={{ color: C.text, fontWeight: 900, fontSize: 16, letterSpacing: -0.5 }}>FinControl</div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 1 }}>Gestão Financeira</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Nav Items */}
+        <nav style={{ flex: 1, padding: "12px 10px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
+          {NAV.map(n => {
+            const active = screen === n.id;
+            return (
+              <button key={n.id} onClick={() => setScreen(n.id)} style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
+                borderRadius: 10, border: "none", cursor: "pointer", width: "100%", textAlign: "left",
+                background: active ? C.accentDim : "transparent",
+                borderLeft: `3px solid ${active ? C.accent : "transparent"}`,
+                transition: "all 0.15s", fontFamily: "inherit",
+              }}>
+                <span style={{ fontSize: 17, lineHeight: 1, opacity: active ? 1 : 0.6 }}>{n.icon}</span>
+                <div>
+                  <div style={{ color: active ? C.accent : C.text, fontWeight: active ? 700 : 500, fontSize: 13 }}>{n.label}</div>
+                  <div style={{ color: C.muted, fontSize: 10, marginTop: 1 }}>{n.desc}</div>
+                </div>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg, ${C.purple}, ${C.blue})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#fff", flexShrink: 0 }}>L</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>Luan</div>
+              <div style={{ color: C.muted, fontSize: 10 }}>Conta pessoal</div>
+            </div>
+            {loading && <div style={{ width: 14, height: 14, border: `2px solid ${C.border}`, borderTopColor: C.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />}
+          </div>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        {/* Topbar */}
+        <div style={{ height: 62, background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "0 28px", gap: 14, flexShrink: 0 }}>
+          <div>
+            <h1 style={{ margin: 0, color: C.text, fontWeight: 800, fontSize: 18 }}>{cur?.label}</h1>
+            <div style={{ color: C.muted, fontSize: 11 }}>{cur?.desc}</div>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: C.accentDim, border: `1px solid ${C.accentGlow}`, borderRadius: 8, padding: "5px 14px", color: C.accent, fontSize: 12, fontWeight: 700 }}>{mesAtual()}</div>
+            {/* Stats rápidos no topbar */}
+            {!loading && transacoes.length > 0 && (() => {
+              const now = new Date();
+              const doMes = transacoes.filter(t => { const d = new Date(t.data); return d.getMonth()+1 === now.getMonth()+1 && d.getFullYear() === now.getFullYear(); });
+              const rec  = doMes.filter(t => t.tipo === "rec").reduce((s,t)  => s+Number(t.valor),0);
+              const desp = doMes.filter(t => t.tipo === "desp").reduce((s,t) => s+Number(t.valor),0);
+              return (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <div style={{ background: C.accent+"18", border: `1px solid ${C.accent}33`, borderRadius: 8, padding: "5px 12px" }}>
+                    <span style={{ color: C.muted, fontSize: 10 }}>Receitas </span>
+                    <span style={{ color: C.accent, fontSize: 12, fontWeight: 700 }}>{fmt(rec)}</span>
+                  </div>
+                  <div style={{ background: C.red+"18", border: `1px solid ${C.red}33`, borderRadius: 8, padding: "5px 12px" }}>
+                    <span style={{ color: C.muted, fontSize: 10 }}>Despesas </span>
+                    <span style={{ color: C.red, fontSize: 12, fontWeight: 700 }}>{fmt(desp)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+          {renderScreen()}
+        </div>
+      </div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        input, select { color-scheme: dark; }
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${C.muted}; }
+        button { transition: all 0.15s; }
+        button:active { opacity: 0.65; }
+        nav button:hover { background: ${C.accentDim} !important; }
+        input:focus, select:focus { border-color: ${C.accent} !important; outline: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+
+  // ── MOBILE LAYOUT ──
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'Outfit','DM Sans',sans-serif", color: C.text, display: "flex", flexDirection: "column", maxWidth: 640, margin: "0 auto" }}>
+
+      {/* Mobile Top Bar */}
       <div style={{ position: "sticky", top: 0, zIndex: 50, background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", padding: "12px 18px", gap: 10 }}>
         <div style={{ width: 30, height: 30, background: `linear-gradient(135deg, ${C.accent}, ${C.blue})`, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 900, flexShrink: 0 }}>₿</div>
         <div>
@@ -1021,18 +1150,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* Content */}
+      {/* Mobile Content */}
       <div style={{ flex: 1, padding: "16px 14px 90px" }}>
-        {screen === "dashboard"     && <Dashboard     {...props} />}
-        {screen === "transacoes"    && <Transacoes    {...props} setTransacoes={setTransacoes} />}
-        {screen === "patrimonio"    && <Patrimonio    {...props} />}
-        {screen === "investimentos" && <Investimentos {...props} setAtivos={setAtivos} />}
-        {screen === "swing"         && <SwingTrade    {...props} setSwings={setSwings} />}
-        {screen === "relatorios"    && <Relatorios    {...props} />}
-        {screen === "config"        && <Configuracoes {...props} setCats={setCats} setContas={setContas} />}
+        {renderScreen()}
       </div>
 
-      {/* Bottom Nav */}
+      {/* Mobile Bottom Nav */}
       <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 640, background: C.surface, borderTop: `1px solid ${C.border}`, display: "flex", padding: "8px 2px 14px", zIndex: 50 }}>
         {NAV.map(n => (
           <button key={n.id} onClick={() => setScreen(n.id)} style={{
