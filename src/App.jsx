@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://eoajfzjugksyvlftccvb.supabase.co";
@@ -27,7 +27,6 @@ const C = {
   accent: "#00d4aa", accentDim: "#00d4aa18", accentGlow: "#00d4aa40",
   blue: "#4d9eff", red: "#ff4d6d", yellow: "#ffd666", purple: "#9b7dff",
   orange: "#ff8c42", text: "#e8ecf4", muted: "#5a6680", subtle: "#1c2235",
-  bet: "#f59e0b",
 };
 const PALETTE = [C.accent, C.blue, C.yellow, C.purple, C.red, C.orange, "#66ffcc", "#ff99cc", "#aaddff", "#ffaacc"];
 
@@ -115,7 +114,7 @@ const StatCard = ({ label, value, color = C.text, sub }) => (
 );
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ transacoes, contas, ativos, betMovs, loading }) {
+function Dashboard({ transacoes, contas, ativos, loading }) {
   const now  = new Date();
   const mesN = now.getMonth() + 1, anoN = now.getFullYear();
 
@@ -123,14 +122,8 @@ function Dashboard({ transacoes, contas, ativos, betMovs, loading }) {
   const recMes  = doMes.filter(t => t.tipo === "rec").reduce((s,t) => s + Number(t.valor), 0);
   const despMes = doMes.filter(t => t.tipo === "desp").reduce((s,t) => s + Number(t.valor), 0);
 
-  // Resultado líquido de bets no mês
-  const betDoMes = betMovs.filter(m => { const d = new Date(m.data); return d.getMonth()+1 === mesN && d.getFullYear() === anoN; });
-  const betSaques = betDoMes.filter(m => m.tipo === "saque").reduce((s,m) => s + Number(m.valor), 0);
-  const betDepositos = betDoMes.filter(m => m.tipo === "deposito").reduce((s,m) => s + Number(m.valor), 0);
-  const betLiquido = betSaques - betDepositos;
-
-  const recTotal  = recMes + (betLiquido > 0 ? betLiquido : 0);
-  const despTotal = despMes + (betLiquido < 0 ? Math.abs(betLiquido) : 0);
+  const recTotal  = recMes;
+  const despTotal = despMes;
   const resultado = recTotal - despTotal;
   const poupanca  = recTotal > 0 ? ((resultado / recTotal) * 100).toFixed(1) : 0;
 
@@ -155,9 +148,8 @@ function Dashboard({ transacoes, contas, ativos, betMovs, loading }) {
   const gastosCat = useMemo(() => {
     const map = {};
     doMes.filter(t => t.tipo === "desp").forEach(t => { map[t.cat||"Outros"] = (map[t.cat||"Outros"]||0) + Number(t.valor); });
-    if (betLiquido < 0) map["Bets"] = (map["Bets"]||0) + Math.abs(betLiquido);
-    return Object.entries(map).map(([nome, valor], i) => ({ nome, valor, cor: nome === "Bets" ? C.bet : PALETTE[i % PALETTE.length] })).sort((a,b) => b.valor - a.valor).slice(0,7);
-  }, [doMes, betLiquido]);
+    return Object.entries(map).map(([nome, valor], i) => ({ nome, valor, cor: PALETTE[i % PALETTE.length] })).sort((a,b) => b.valor - a.valor).slice(0,7);
+  }, [doMes]);
 
   const ultimas  = [...transacoes].sort((a,b) => new Date(b.data) - new Date(a.data)).slice(0,6);
   const proximas = transacoes.filter(t => t.tipo === "desp" && t.status === "pendente").sort((a,b) => new Date(a.data) - new Date(b.data)).slice(0,4);
@@ -173,7 +165,6 @@ function Dashboard({ transacoes, contas, ativos, betMovs, loading }) {
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
           <div><div style={{ color: C.muted, fontSize: 9 }}>EM CONTAS</div><div style={{ color: C.blue, fontWeight: 700 }}>{fmt(saldoContas)}</div></div>
           <div><div style={{ color: C.muted, fontSize: 9 }}>INVESTIDO</div><div style={{ color: C.purple, fontWeight: 700 }}>{fmt(valorAtivos)}</div></div>
-          {betLiquido !== 0 && <div><div style={{ color: C.muted, fontSize: 9 }}>BETS (MÊS)</div><div style={{ color: betLiquido > 0 ? C.accent : C.red, fontWeight: 700 }}>{fmt(betLiquido)}</div></div>}
         </div>
       </Card>
 
@@ -378,256 +369,10 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
   );
 }
 
-// ─── BETS ─────────────────────────────────────────────────────────────────────
-function Bets({ betCasas, setBetCasas, betMovs, setBetMovs, contas, loading }) {
-  const [tab, setTab]           = useState("resumo");
-  const [modalMov, setModalMov] = useState(null); // "deposito" | "saque"
-  const [modalCasa, setModalCasa] = useState(false);
-  const [modalPessoa, setModalPessoa] = useState(false);
-  const [saving, setSaving]     = useState(false);
-  const [formMov, setFormMov]   = useState({ casa_id: "", valor: "", conta: "", obs: "", data: hoje() });
-  const [formCasa, setFormCasa] = useState({ pessoa: "", nome: "", status: "ativa" });
-  const [novaPessoa, setNovaPessoa] = useState("");
-  const fm = k => v => setFormMov(p => ({ ...p, [k]: v }));
-  const fc = k => v => setFormCasa(p => ({ ...p, [k]: v }));
-
-  // Pessoas únicas
-  const pessoas = [...new Set(betCasas.map(c => c.pessoa))];
-
-  // Calcular lucro/prejuízo por casa
-  const casasComSaldo = betCasas.map(casa => {
-    const movs  = betMovs.filter(m => m.casa_id === casa.id);
-    const deps  = movs.filter(m => m.tipo === "deposito").reduce((s,m) => s + Number(m.valor), 0);
-    const saqs  = movs.filter(m => m.tipo === "saque").reduce((s,m) => s + Number(m.valor), 0);
-    return { ...casa, depositos: deps, saques: saqs, liquido: saqs - deps };
-  });
-
-  // Stats gerais
-  const totalDeps  = betMovs.filter(m => m.tipo === "deposito").reduce((s,m) => s + Number(m.valor), 0);
-  const totalSaqs  = betMovs.filter(m => m.tipo === "saque").reduce((s,m) => s + Number(m.valor), 0);
-  const totalLiq   = totalSaqs - totalDeps;
-
-  const salvarMov = async (tipo) => {
-    if (!formMov.casa_id || !formMov.valor) return;
-    setSaving(true);
-    const mov = { ...formMov, id: uid(), tipo, valor: Number(formMov.valor) };
-    await db.insert("bet_movs", mov);
-    setBetMovs(p => [mov, ...p]);
-    setModalMov(null);
-    setFormMov({ casa_id: "", valor: "", conta: "", obs: "", data: hoje() });
-    setSaving(false);
-  };
-
-  const salvarCasa = async () => {
-    if (!formCasa.pessoa || !formCasa.nome) return;
-    setSaving(true);
-    const nova = { ...formCasa, id: uid() };
-    await db.insert("bet_casas", nova);
-    setBetCasas(p => [...p, nova]);
-    setModalCasa(false);
-    setFormCasa({ pessoa: "", nome: "", status: "ativa" });
-    setSaving(false);
-  };
-
-  const excluirCasa = async id => { await db.remove("bet_casas", id); setBetCasas(p => p.filter(c => c.id !== id)); };
-  const excluirMov  = async id => { await db.remove("bet_movs",  id); setBetMovs(p =>  p.filter(m => m.id !== id)); };
-
-  const contaOpts = contas.map(c => c.nome);
-  const casaOpts  = betCasas.map(c => ({ value: c.id, label: `${c.pessoa} — ${c.nome}` }));
-
-  const STATUS_COLOR = { ativa: C.accent, limitada: C.yellow, bloqueada: C.red, encerrada: C.muted };
-
-  if (loading) return <Spinner />;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header com botões */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {["resumo","movimentos","contas"].map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{ padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, background: tab === t ? C.bet : C.surface, color: tab === t ? C.bg : C.muted, fontFamily: "inherit" }}>
-              {t === "resumo" ? "Resumo" : t === "movimentos" ? "Movimentos" : "Contas"}
-            </button>
-          ))}
-        </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <Btn small color={C.accent} onClick={() => setModalMov("saque")}>💰 Saque</Btn>
-          <Btn small color={C.red} onClick={() => setModalMov("deposito")}>📤 Depósito</Btn>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-        <StatCard label="Total Depositado" value={fmt(totalDeps)} color={C.red} />
-        <StatCard label="Total Sacado"     value={fmt(totalSaqs)} color={C.accent} />
-        <StatCard label="Resultado Líquido" value={fmt(totalLiq)} color={totalLiq >= 0 ? C.accent : C.red} sub={totalDeps > 0 ? fmtPct((totalLiq/totalDeps)*100) : ""} />
-      </div>
-
-      {/* TAB: Resumo por pessoa */}
-      {tab === "resumo" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {pessoas.length === 0
-            ? <Card><Empty icon="🎲" msg="Nenhuma conta cadastrada" sub="Adicione contas em 'Contas' e registre depósitos e saques" /></Card>
-            : pessoas.map(pessoa => {
-                const casasDaPessoa = casasComSaldo.filter(c => c.pessoa === pessoa);
-                const liqPessoa = casasDaPessoa.reduce((s,c) => s + c.liquido, 0);
-                return (
-                  <Card key={pessoa} style={{ borderColor: liqPessoa >= 0 ? C.accent+"44" : C.red+"44" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 36, height: 36, background: C.bet+"22", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>
-                        <div>
-                          <div style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>{pessoa}</div>
-                          <div style={{ color: C.muted, fontSize: 11 }}>{casasDaPessoa.length} contas</div>
-                        </div>
-                      </div>
-                      <div style={{ color: liqPessoa >= 0 ? C.accent : C.red, fontWeight: 900, fontFamily: "'DM Mono',monospace", fontSize: 18 }}>{fmt(liqPessoa)}</div>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {casasDaPessoa.map(casa => (
-                        <div key={casa.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.surface, borderRadius: 10 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[casa.status] || C.muted }} />
-                            <div>
-                              <div style={{ color: C.text, fontWeight: 700, fontSize: 13 }}>{casa.nome}</div>
-                              <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-                                <Badge color={STATUS_COLOR[casa.status] || C.muted}>{casa.status}</Badge>
-                                <span style={{ color: C.muted, fontSize: 10 }}>Dep: {fmt(casa.depositos)} · Saq: {fmt(casa.saques)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ color: casa.liquido >= 0 ? C.accent : C.red, fontWeight: 800, fontFamily: "'DM Mono',monospace", fontSize: 14 }}>{fmt(casa.liquido)}</div>
-                            <button onClick={() => excluirCasa(casa.id)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13 }}>🗑</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                );
-              })
-          }
-        </div>
-      )}
-
-      {/* TAB: Movimentos */}
-      {tab === "movimentos" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {betMovs.length === 0
-            ? <Card><Empty icon="📋" msg="Nenhum movimento" sub="Registre depósitos e saques" /></Card>
-            : <Card style={{ padding: 0, overflow: "hidden" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                      {["Tipo","Casa","Conta","Data","Valor","Obs",""].map((h,i) => (
-                        <th key={i} style={{ padding: "12px 16px", textAlign: "left", color: C.muted, fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {betMovs.map((m,i) => {
-                      const casa = betCasas.find(c => c.id === m.casa_id);
-                      return (
-                        <tr key={m.id} style={{ borderBottom: `1px solid ${C.border}22`, background: i%2===0?"transparent":C.surface+"44" }}>
-                          <td style={{ padding: "11px 16px" }}><Badge color={m.tipo === "saque" ? C.accent : C.red}>{m.tipo}</Badge></td>
-                          <td style={{ padding: "11px 16px", color: C.text, fontSize: 13 }}>{casa ? `${casa.pessoa} — ${casa.nome}` : "—"}</td>
-                          <td style={{ padding: "11px 16px", color: C.muted, fontSize: 12 }}>{m.conta || "—"}</td>
-                          <td style={{ padding: "11px 16px", color: C.muted, fontSize: 12 }}>{m.data}</td>
-                          <td style={{ padding: "11px 16px", color: m.tipo === "saque" ? C.accent : C.red, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{fmt(m.valor)}</td>
-                          <td style={{ padding: "11px 16px", color: C.muted, fontSize: 12 }}>{m.obs || "—"}</td>
-                          <td style={{ padding: "11px 16px" }}><button onClick={() => excluirMov(m.id)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer" }}>🗑</button></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </Card>
-          }
-        </div>
-      )}
-
-      {/* TAB: Contas */}
-      {tab === "contas" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn small outline onClick={() => setModalCasa(true)}>+ Nova Conta</Btn>
-          </div>
-          {betCasas.length === 0
-            ? <Card><Empty icon="🏠" msg="Nenhuma casa cadastrada" sub="Adicione uma casa de apostas" /></Card>
-            : pessoas.map(pessoa => (
-                <Card key={pessoa}>
-                  <div style={{ color: C.bet, fontWeight: 700, fontSize: 13, marginBottom: 10 }}>👤 {pessoa}</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {betCasas.filter(c => c.pessoa === pessoa).map(casa => (
-                      <div key={casa.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.surface, borderRadius: 10 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ color: C.text, fontWeight: 600 }}>{casa.nome}</span>
-                          <Badge color={STATUS_COLOR[casa.status] || C.muted}>{casa.status}</Badge>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          {["ativa","limitada","bloqueada","encerrada"].map(st => (
-                            <button key={st} onClick={async () => { await db.update("bet_casas", casa.id, { status: st }); setBetCasas(p => p.map(c => c.id === casa.id ? { ...c, status: st } : c)); }} style={{ background: casa.status === st ? STATUS_COLOR[st]+"33" : "transparent", border: `1px solid ${casa.status === st ? STATUS_COLOR[st] : C.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: casa.status === st ? STATUS_COLOR[st] : C.muted, fontSize: 10, fontWeight: 700 }}>{st}</button>
-                          ))}
-                          <button onClick={() => excluirCasa(casa.id)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13 }}>🗑</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              ))
-          }
-        </div>
-      )}
-
-      {/* Modal Depósito/Saque */}
-      {modalMov && (
-        <Modal title={modalMov === "deposito" ? "📤 Registrar Depósito" : "💰 Registrar Saque"} onClose={() => setModalMov(null)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ background: (modalMov === "deposito" ? C.red : C.accent)+"18", border: `1px solid ${(modalMov === "deposito" ? C.red : C.accent)}33`, borderRadius: 10, padding: "10px 14px", color: modalMov === "deposito" ? C.red : C.accent, fontSize: 13, fontWeight: 600 }}>
-              {modalMov === "deposito" ? "💸 Dinheiro saindo da sua conta para a casa de apostas" : "✅ Dinheiro entrando da casa de apostas para sua conta"}
-            </div>
-            <InputField label="Casa de Apostas" value={formMov.casa_id} onChange={fm("casa_id")} options={casaOpts.map(o => o.label)} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <InputField label="Valor (R$)" value={formMov.valor} onChange={fm("valor")} type="number" placeholder="0,00" />
-              <InputField label="Data" value={formMov.data} onChange={fm("data")} type="date" />
-            </div>
-            <InputField label="Conta Utilizada" value={formMov.conta} onChange={fm("conta")} options={contaOpts} />
-            <InputField label="Observação (opcional)" value={formMov.obs} onChange={fm("obs")} placeholder="Ex: Depósito via Pix" />
-            <Btn onClick={async () => {
-              const casa = betCasas.find(c => `${c.pessoa} — ${c.nome}` === formMov.casa_id);
-              if (!casa || !formMov.valor) return;
-              setSaving(true);
-              const mov = { ...formMov, id: uid(), tipo: modalMov, valor: Number(formMov.valor), casa_id: casa.id };
-              await db.insert("bet_movs", mov);
-              setBetMovs(p => [mov, ...p]);
-              setModalMov(null);
-              setFormMov({ casa_id: "", valor: "", conta: "", obs: "", data: hoje() });
-              setSaving(false);
-            }} full color={modalMov === "deposito" ? C.red : C.accent}>{saving ? "Salvando..." : `Confirmar ${modalMov === "deposito" ? "Depósito" : "Saque"}`}</Btn>
-          </div>
-        </Modal>
-      )}
-
-      {/* Modal Nova Casa */}
-      {modalCasa && (
-        <Modal title="Nova Casa de Apostas" onClose={() => setModalCasa(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <InputField label="Pessoa" value={formCasa.pessoa} onChange={fc("pessoa")} options={pessoas.length ? pessoas : undefined} placeholder="Ex: Luan" />
-            <InputField label="Casa de Apostas" value={formCasa.nome} onChange={fc("nome")} placeholder="Ex: Bet365" />
-            <InputField label="Status" value={formCasa.status} onChange={fc("status")} options={["ativa","limitada","bloqueada","encerrada"]} />
-            <Btn onClick={salvarCasa} full>{saving ? "Salvando..." : "Cadastrar"}</Btn>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
 // ─── PATRIMÔNIO ───────────────────────────────────────────────────────────────
-function Patrimonio({ transacoes, contas, ativos, betMovs, loading }) {
+function Patrimonio({ transacoes, contas, ativos, loading }) {
   const saldoContas = contas.filter(c => c.tipo !== "Cartão Crédito").reduce((s,c) => s + Number(c.saldo), 0);
   const valorAtivos = ativos.reduce((s,a) => s + Number(a.atual||a.pmedio) * Number(a.qtd), 0);
-  const betLiquido  = betMovs.reduce((s,m) => m.tipo === "saque" ? s + Number(m.valor) : s - Number(m.valor), 0);
   const total       = saldoContas + valorAtivos;
 
   // Evolução mensal acumulada (baseada em transações)
@@ -651,7 +396,6 @@ function Patrimonio({ transacoes, contas, ativos, betMovs, loading }) {
   const distribuicao = [
     { nome: "Contas",        valor: saldoContas, cor: C.blue },
     { nome: "Investimentos", valor: valorAtivos,  cor: C.purple },
-    ...(betLiquido !== 0 ? [{ nome: "Bets", valor: Math.abs(betLiquido), cor: C.bet }] : []),
   ].filter(d => d.valor > 0);
 
   if (loading) return <Spinner />;
@@ -665,7 +409,6 @@ function Patrimonio({ transacoes, contas, ativos, betMovs, loading }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <div><div style={{ color: C.muted, fontSize: 9 }}>CONTAS BANCÁRIAS</div><div style={{ color: C.blue, fontWeight: 700, fontSize: 15 }}>{fmt(saldoContas)}</div></div>
           <div><div style={{ color: C.muted, fontSize: 9 }}>INVESTIMENTOS</div><div style={{ color: C.purple, fontWeight: 700, fontSize: 15 }}>{fmt(valorAtivos)}</div></div>
-          <div><div style={{ color: C.muted, fontSize: 9 }}>RESULTADO BETS</div><div style={{ color: betLiquido >= 0 ? C.accent : C.red, fontWeight: 700, fontSize: 15 }}>{fmt(betLiquido)}</div></div>
         </div>
       </Card>
 
@@ -888,7 +631,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
 }
 
 // ─── RELATÓRIOS ───────────────────────────────────────────────────────────────
-function Relatorios({ transacoes, ativos, betMovs, loading }) {
+function Relatorios({ transacoes, ativos, loading }) {
   const now  = new Date();
   const mesN = now.getMonth()+1, anoN = now.getFullYear();
   const doMes = transacoes.filter(t => { const d=new Date(t.data); return d.getMonth()+1===mesN && d.getFullYear()===anoN; });
@@ -900,8 +643,6 @@ function Relatorios({ transacoes, ativos, betMovs, loading }) {
   const catDesp = {};
   doMes.filter(t => t.tipo==="desp").forEach(t => { catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor); });
   const topCat     = Object.entries(catDesp).sort((a,b) => b[1]-a[1]);
-  const betLiqMes  = betMovs.filter(m => { const d=new Date(m.data); return d.getMonth()+1===mesN && d.getFullYear()===anoN; }).reduce((s,m) => m.tipo==="saque"?s+Number(m.valor):s-Number(m.valor), 0);
-  const betLiqTotal= betMovs.reduce((s,m) => m.tipo==="saque"?s+Number(m.valor):s-Number(m.valor), 0);
   const totalAtual  = ativos.reduce((s,a) => s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const totalInvest = ativos.reduce((s,a) => s+Number(a.pmedio)*Number(a.qtd),0);
 
@@ -920,8 +661,7 @@ function Relatorios({ transacoes, ativos, betMovs, loading }) {
         <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>📅 Mês Atual</div>
         <Row label="Receitas"        val={fmt(recMes)}  cor={C.accent} />
         <Row label="Despesas"        val={fmt(despMes)} cor={C.red} />
-        <Row label="Resultado Bets"  val={fmt(betLiqMes)} cor={betLiqMes>=0?C.accent:C.red} />
-        <Row label="Resultado Total" val={fmt(recMes-despMes+betLiqMes)} cor={recMes-despMes+betLiqMes>=0?C.accent:C.red} />
+        <Row label="Resultado" val={fmt(recMes-despMes)} cor={recMes-despMes>=0?C.accent:C.red} />
         <Row label="Taxa de Poupança" val={recMes>0?`${(((recMes-despMes)/recMes)*100).toFixed(1)}%`:"—"} cor={C.yellow} />
         <Row label="Transações"      val={String(doMes.length)} />
       </Card>
@@ -937,13 +677,6 @@ function Relatorios({ transacoes, ativos, betMovs, loading }) {
         <Row label="Total Investido"    val={fmt(totalInvest)}             cor={C.blue} />
         <Row label="Valor Atual"        val={fmt(totalAtual)} />
         <Row label="Resultado Carteira" val={fmt(totalAtual-totalInvest)} cor={totalAtual-totalInvest>=0?C.accent:C.red} />
-      </Card>
-      <Card>
-        <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>🎲 Bets (Total)</div>
-        <Row label="Total Depositado" val={fmt(betMovs.filter(m=>m.tipo==="deposito").reduce((s,m)=>s+Number(m.valor),0))} cor={C.red} />
-        <Row label="Total Sacado"     val={fmt(betMovs.filter(m=>m.tipo==="saque").reduce((s,m)=>s+Number(m.valor),0))}    cor={C.accent} />
-        <Row label="Resultado Líquido" val={fmt(betLiqTotal)} cor={betLiqTotal>=0?C.accent:C.red} />
-        <Row label="Movimentos"       val={String(betMovs.length)} />
       </Card>
       {topCat.length > 0 && (
         <Card style={{ gridColumn: "span 2" }}>
@@ -1127,7 +860,6 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
 const NAV = [
   { id:"dashboard",     label:"Início",        icon:"◈", desc:"Resumo do mês" },
   { id:"transacoes",    label:"Transações",    icon:"⇄", desc:"Receitas e despesas" },
-  { id:"bets",          label:"Bets",          icon:"🎲", desc:"Apostas esportivas" },
   { id:"patrimonio",    label:"Patrimônio",    icon:"▲", desc:"Evolução e distribuição" },
   { id:"investimentos", label:"Carteira",      icon:"◆", desc:"Ações e ativos" },
   { id:"relatorios",    label:"Relatórios",    icon:"≡", desc:"Análises" },
@@ -1140,23 +872,19 @@ export default function App() {
   const [contas, setContas]         = useState([]);
   const [ativos, setAtivos]         = useState([]);
   const [cats, setCats]             = useState(DEFAULT_CATS);
-  const [betCasas, setBetCasas]     = useState([]);
-  const [betMovs, setBetMovs]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const isDesktop                   = useIsDesktop();
 
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
-      const [t, c, a, ct, bc, bm] = await Promise.all([
+      const [t, c, a, ct] = await Promise.all([
         db.get("transacoes"), db.get("contas"), db.get("ativos"),
-        db.get("cats"), db.get("bet_casas"), db.get("bet_movs"),
+        db.get("cats"),
       ]);
       setTransacoes(t||[]);
       setContas(c||[]);
       setAtivos(a||[]);
-      setBetCasas(bc||[]);
-      setBetMovs(bm||[]);
       if (ct?.length > 0) {
         const rebuilt = { rec:[], desp:[] };
         ct.forEach(row => {
@@ -1171,13 +899,12 @@ export default function App() {
   }, []);
 
   const cur   = NAV.find(n => n.id === screen);
-  const props = { transacoes, contas, ativos, cats, betCasas, betMovs, loading };
+  const props = { transacoes, contas, ativos, cats, loading };
 
   const renderScreen = () => {
     switch(screen) {
       case "dashboard":     return <Dashboard     {...props} />;
       case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes} />;
-      case "bets":          return <Bets          {...props} setBetCasas={setBetCasas} setBetMovs={setBetMovs} />;
       case "patrimonio":    return <Patrimonio    {...props} />;
       case "investimentos": return <Investimentos {...props} setAtivos={setAtivos} />;
       case "relatorios":    return <Relatorios    {...props} />;
