@@ -7,8 +7,19 @@ const SUPA_KEY = "sb_publishable_YTGd2kRXpAwydD5c5aHLAw_bFI2_Z4X";
 const USER_ID  = "luan";
 const db = {
   async get(table) {
-    const r = await fetch(`${SUPA_URL}/rest/v1/${table}?user_id=eq.${USER_ID}&order=created_at.desc`, { headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` } });
-    return r.ok ? r.json() : [];
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const r = await fetch(`${SUPA_URL}/rest/v1/${table}?user_id=eq.${USER_ID}&order=created_at.desc`, {
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      return r.ok ? r.json() : [];
+    } catch(e) {
+      console.error(`Erro ao buscar ${table}:`, e.message);
+      return [];
+    }
   },
   async insert(table, row) {
     await fetch(`${SUPA_URL}/rest/v1/${table}`, { method: "POST", headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ ...row, user_id: USER_ID }) });
@@ -878,22 +889,27 @@ export default function App() {
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
-      const [t, c, a, ct] = await Promise.all([
-        db.get("transacoes"), db.get("contas"), db.get("ativos"),
-        db.get("cats"),
-      ]);
-      setTransacoes(t||[]);
-      setContas(c||[]);
-      setAtivos(a||[]);
-      if (ct?.length > 0) {
-        const rebuilt = { rec:[], desp:[] };
-        ct.forEach(row => {
-          if (row.tipo==="rec"||row.tipo==="desp")
-            rebuilt[row.tipo].push({ id:row.id, nome:row.nome, subs: Array.isArray(row.subs)?row.subs:(typeof row.subs==="string"?JSON.parse(row.subs):[]) });
-        });
-        if (rebuilt.rec.length>0||rebuilt.desp.length>0) setCats(rebuilt);
+      try {
+        const [t, c, a, ct] = await Promise.all([
+          db.get("transacoes"), db.get("contas"), db.get("ativos"),
+          db.get("cats"),
+        ]);
+        setTransacoes(t||[]);
+        setContas(c||[]);
+        setAtivos(a||[]);
+        if (ct?.length > 0) {
+          const rebuilt = { rec:[], desp:[] };
+          ct.forEach(row => {
+            if (row.tipo==="rec"||row.tipo==="desp")
+              rebuilt[row.tipo].push({ id:row.id, nome:row.nome, subs: Array.isArray(row.subs)?row.subs:(typeof row.subs==="string"?JSON.parse(row.subs):[]) });
+          });
+          if (rebuilt.rec.length>0||rebuilt.desp.length>0) setCats(rebuilt);
+        }
+      } catch(e) {
+        console.error("Erro ao carregar dados:", e);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     fetchAll();
   }, []);
