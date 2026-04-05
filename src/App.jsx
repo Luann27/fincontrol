@@ -1,34 +1,58 @@
 import { useState, useMemo, useEffect } from "react";
-import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://eoajfzjugksyvlftccvb.supabase.co";
 const SUPA_KEY = "sb_publishable_YTGd2kRXpAwydD5c5aHLAw_bFI2_Z4X";
 const USER_ID  = "luan";
+
+const req = async (url, opts = {}) => {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 10000);
+  try {
+    const r = await fetch(url, { ...opts, signal: controller.signal });
+    clearTimeout(t);
+    return r;
+  } catch(e) { clearTimeout(t); throw e; }
+};
+
 const db = {
-  async get(table) {
+  async get(table, extra = "") {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const r = await fetch(`${SUPA_URL}/rest/v1/${table}?user_id=eq.${USER_ID}&order=created_at.desc`, {
-        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
-        signal: controller.signal
+      const r = await req(`${SUPA_URL}/rest/v1/${table}?user_id=eq.${USER_ID}${extra}&order=created_at.desc`, {
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` }
       });
-      clearTimeout(timeout);
       return r.ok ? r.json() : [];
-    } catch(e) {
-      console.error(`Erro ao buscar ${table}:`, e.message);
-      return [];
-    }
+    } catch(e) { console.error(`get ${table}:`, e.message); return []; }
   },
   async insert(table, row) {
-    await fetch(`${SUPA_URL}/rest/v1/${table}`, { method: "POST", headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ ...row, user_id: USER_ID }) });
+    try {
+      const r = await req(`${SUPA_URL}/rest/v1/${table}`, {
+        method: "POST",
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ ...row, user_id: USER_ID })
+      });
+      if (!r.ok) { const e = await r.text(); console.error(`insert ${table}:`, e); return false; }
+      return true;
+    } catch(e) { console.error(`insert ${table}:`, e.message); return false; }
   },
   async remove(table, id) {
-    await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}&user_id=eq.${USER_ID}`, { method: "DELETE", headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` } });
+    try {
+      const r = await req(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}&user_id=eq.${USER_ID}`, {
+        method: "DELETE", headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` }
+      });
+      return r.ok;
+    } catch(e) { console.error(`remove ${table}:`, e.message); return false; }
   },
   async update(table, id, row) {
-    await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}&user_id=eq.${USER_ID}`, { method: "PATCH", headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify(row) });
+    try {
+      const r = await req(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}&user_id=eq.${USER_ID}`, {
+        method: "PATCH",
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(row)
+      });
+      return r.ok;
+    } catch(e) { console.error(`update ${table}:`, e.message); return false; }
   }
 };
 
@@ -42,161 +66,213 @@ const C = {
 const PALETTE = [C.accent, C.blue, C.yellow, C.purple, C.red, C.orange, "#66ffcc", "#ff99cc", "#aaddff", "#ffaacc"];
 
 const DEFAULT_CATS = {
-  rec:  [
-    { id: "r1", nome: "Salário",       subs: ["CLT", "PJ"] },
-    { id: "r2", nome: "Freelance",     subs: ["Design", "Dev", "Consultoria"] },
-    { id: "r3", nome: "Dividendos",    subs: ["Ações", "FIIs", "Exterior"] },
-    { id: "r4", nome: "Outros Ganhos", subs: ["Vendas", "Reembolso", "Presente"] },
+  rec: [
+    { id:"r1", nome:"Salário",       subs:["CLT","PJ"] },
+    { id:"r2", nome:"Freelance",     subs:["Design","Dev","Consultoria"] },
+    { id:"r3", nome:"Dividendos",    subs:["Ações","FIIs","Exterior"] },
+    { id:"r4", nome:"Outros Ganhos", subs:["Vendas","Reembolso","Presente"] },
   ],
   desp: [
-    { id: "d1", nome: "Moradia",       subs: ["Aluguel", "Condomínio", "IPTU", "Luz", "Água", "Internet"] },
-    { id: "d2", nome: "Alimentação",   subs: ["Supermercado", "Restaurante", "Delivery", "Padaria"] },
-    { id: "d3", nome: "Transporte",    subs: ["Combustível", "Uber", "Ônibus", "IPVA", "Seguro Auto"] },
-    { id: "d4", nome: "Lazer",         subs: ["Cinema", "Viagem", "Jogos", "Academia", "Esporte"] },
-    { id: "d5", nome: "Saúde",         subs: ["Consulta", "Remédio", "Plano de Saúde", "Dentista"] },
-    { id: "d6", nome: "Assinaturas",   subs: ["Streaming", "Software", "Clube", "Revista"] },
-    { id: "d7", nome: "Educação",      subs: ["Curso", "Livro", "Faculdade", "Idioma"] },
-    { id: "d8", nome: "Investimentos", subs: ["Ações", "FIIs", "Renda Fixa", "Cripto"] },
-    { id: "d9", nome: "Outros",        subs: [] },
+    { id:"d1", nome:"Moradia",       subs:["Aluguel","Condomínio","IPTU","Luz","Água","Internet"] },
+    { id:"d2", nome:"Alimentação",   subs:["Supermercado","Restaurante","Delivery","Padaria"] },
+    { id:"d3", nome:"Transporte",    subs:["Combustível","Uber","Ônibus","IPVA","Seguro Auto"] },
+    { id:"d4", nome:"Lazer",         subs:["Cinema","Viagem","Jogos","Academia","Esporte"] },
+    { id:"d5", nome:"Saúde",         subs:["Consulta","Remédio","Plano de Saúde","Dentista"] },
+    { id:"d6", nome:"Assinaturas",   subs:["Streaming","Software","Clube","Revista"] },
+    { id:"d7", nome:"Educação",      subs:["Curso","Livro","Faculdade","Idioma"] },
+    { id:"d8", nome:"Investimentos", subs:["Ações","FIIs","Renda Fixa","Cripto"] },
+    { id:"d9", nome:"Outros",        subs:[] },
   ],
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fmt      = v => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v) || 0);
-const fmtPct   = v => `${Number(v) > 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
-const uid      = () => Math.random().toString(36).slice(2, 10);
-const hoje     = () => new Date().toISOString().slice(0, 10);
-const mesAtual = () => { const d = new Date(); return `${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`; };
+const fmt      = v => new Intl.NumberFormat("pt-BR", { style:"currency", currency:"BRL" }).format(Number(v)||0);
+const fmtPct   = v => `${Number(v)>0?"+":""}${Number(v).toFixed(2)}%`;
+const uid      = () => Math.random().toString(36).slice(2,10);
+const hoje     = () => new Date().toISOString().slice(0,10);
+const mesAtual = () => { const d=new Date(); return `${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`; };
 
 function useIsDesktop() {
   const [ok, setOk] = useState(window.innerWidth >= 768);
-  useEffect(() => { const fn = () => setOk(window.innerWidth >= 768); window.addEventListener("resize", fn); return () => window.removeEventListener("resize", fn); }, []);
+  useEffect(() => { const fn=()=>setOk(window.innerWidth>=768); window.addEventListener("resize",fn); return ()=>window.removeEventListener("resize",fn); },[]);
   return ok;
 }
 
 // ─── BASE UI ──────────────────────────────────────────────────────────────────
-const Card   = ({ children, style = {} }) => <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, ...style }}>{children}</div>;
-const Badge  = ({ children, color = C.accent }) => <span style={{ background: color+"22", color, border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{children}</span>;
-const Btn    = ({ children, onClick, color = C.accent, outline = false, small = false, full = false, danger = false, style = {} }) => (
-  <button onClick={onClick} style={{ padding: small ? "7px 14px" : "9px 18px", borderRadius: 9, border: outline ? `1px solid ${danger ? C.red : color}` : "none", background: danger ? C.red+"22" : outline ? "transparent" : color, color: danger ? C.red : outline ? color : C.bg, fontWeight: 700, fontSize: small ? 12 : 13, cursor: "pointer", width: full ? "100%" : "auto", fontFamily: "inherit", ...style }}>{children}</button>
+const Card   = ({children,style={}}) => <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16,...style}}>{children}</div>;
+const Badge  = ({children,color=C.accent}) => <span style={{background:color+"22",color,border:`1px solid ${color}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{children}</span>;
+const Btn    = ({children,onClick,color=C.accent,outline=false,small=false,full=false,danger=false,style={}}) => (
+  <button onClick={onClick} style={{padding:small?"7px 14px":"9px 18px",borderRadius:9,border:outline?`1px solid ${danger?C.red:color}`:"none",background:danger?C.red+"22":outline?"transparent":color,color:danger?C.red:outline?color:C.bg,fontWeight:700,fontSize:small?12:13,cursor:"pointer",width:full?"100%":"auto",fontFamily:"inherit",...style}}>{children}</button>
 );
-const InputField = ({ label, value, onChange, type = "text", placeholder = "", options = null }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-    {label && <label style={{ color: C.muted, fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>{label}</label>}
+const InputField = ({label,value,onChange,type="text",placeholder="",options=null}) => (
+  <div style={{display:"flex",flexDirection:"column",gap:5}}>
+    {label && <label style={{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>{label}</label>}
     {options
-      ? <select value={value} onChange={e => onChange(e.target.value)} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, padding: "10px 12px", color: value ? C.text : C.muted, fontSize: 13, outline: "none", fontFamily: "inherit", WebkitAppearance: "none" }}>
+      ? <select value={value} onChange={e=>onChange(e.target.value)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",color:value?C.text:C.muted,fontSize:13,outline:"none",fontFamily:"inherit",WebkitAppearance:"none"}}>
           <option value="">Selecionar...</option>
-          {options.map((o,i) => <option key={i} value={o}>{o}</option>)}
+          {options.map((o,i)=><option key={i} value={typeof o==="string"?o:o.value}>{typeof o==="string"?o:o.label}</option>)}
         </select>
-      : <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, padding: "10px 12px", color: C.text, fontSize: 13, outline: "none", fontFamily: "inherit", width: "100%" }} />
+      : <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",color:C.text,fontSize:13,outline:"none",fontFamily:"inherit",width:"100%"}} />
     }
   </div>
 );
-const Modal  = ({ title, onClose, children }) => (
-  <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, width: "100%", maxWidth: 520, maxHeight: "90vh", overflow: "auto", padding: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h3 style={{ margin: 0, color: C.text, fontWeight: 800, fontSize: 16 }}>{title}</h3>
-        <button onClick={onClose} style={{ background: C.subtle, border: "none", color: C.muted, borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
+const Modal  = ({title,onClose,children}) => (
+  <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"#000b",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}}>
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:18,width:"100%",maxWidth:520,maxHeight:"90vh",overflow:"auto",padding:24}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <h3 style={{margin:0,color:C.text,fontWeight:800,fontSize:16}}>{title}</h3>
+        <button onClick={onClose} style={{background:C.subtle,border:"none",color:C.muted,borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:18,lineHeight:1}}>×</button>
       </div>
       {children}
     </div>
   </div>
 );
-const Empty   = ({ icon, msg, sub }) => (
-  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "36px 20px", gap: 8 }}>
-    <div style={{ fontSize: 36, opacity: 0.25 }}>{icon}</div>
-    <div style={{ color: C.muted, fontWeight: 700, fontSize: 14 }}>{msg}</div>
-    {sub && <div style={{ color: C.muted, fontSize: 12, opacity: 0.6, textAlign: "center" }}>{sub}</div>}
+const Empty   = ({icon,msg,sub}) => (
+  <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"36px 20px",gap:8}}>
+    <div style={{fontSize:36,opacity:0.25}}>{icon}</div>
+    <div style={{color:C.muted,fontWeight:700,fontSize:14}}>{msg}</div>
+    {sub&&<div style={{color:C.muted,fontSize:12,opacity:0.6,textAlign:"center"}}>{sub}</div>}
   </div>
 );
-const Spinner = () => <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><div style={{ width: 28, height: 28, border: `3px solid ${C.border}`, borderTopColor: C.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} /></div>;
-const MiniTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 14px", fontSize: 12 }}><div style={{ color: C.muted, marginBottom: 4 }}>{label}</div>{payload.map((p,i) => <div key={i} style={{ color: p.color||C.text, fontWeight: 700 }}>{fmt(p.value)}</div>)}</div>;
+const Spinner = () => <div style={{display:"flex",justifyContent:"center",padding:40}}><div style={{width:28,height:28,border:`3px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite"}} /></div>;
+const MiniTooltip = ({active,payload,label}) => {
+  if (!active||!payload?.length) return null;
+  return <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 14px",fontSize:12}}><div style={{color:C.muted,marginBottom:4}}>{label}</div>{payload.map((p,i)=><div key={i} style={{color:p.color||C.text,fontWeight:700}}>{fmt(p.value)}</div>)}</div>;
 };
-const SectionTitle = ({ children }) => <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", padding: "4px 0 8px" }}>{children}</div>;
-const StatCard = ({ label, value, color = C.text, sub }) => (
+const StatCard = ({label,value,color=C.text,sub}) => (
   <Card>
-    <div style={{ color: C.muted, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>{label}</div>
-    <div style={{ color, fontSize: 20, fontWeight: 900, fontFamily: "'DM Mono',monospace", marginTop: 4 }}>{value}</div>
-    {sub && <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>{sub}</div>}
+    <div style={{color:C.muted,fontSize:10,letterSpacing:1,textTransform:"uppercase"}}>{label}</div>
+    <div style={{color,fontSize:20,fontWeight:900,fontFamily:"'DM Mono',monospace",marginTop:4}}>{value}</div>
+    {sub&&<div style={{color:C.muted,fontSize:11,marginTop:2}}>{sub}</div>}
   </Card>
 );
+const SectionTitle = ({children}) => <div style={{color:C.muted,fontSize:10,fontWeight:700,letterSpacing:2,textTransform:"uppercase",padding:"4px 0 8px"}}>{children}</div>;
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ transacoes, contas, ativos, loading }) {
+function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos, setTransacoes, setContas, setCartaoPagamentos, loading }) {
   const now  = new Date();
-  const mesN = now.getMonth() + 1, anoN = now.getFullYear();
+  const mesN = now.getMonth()+1, anoN = now.getFullYear();
+  const [modalFatura, setModalFatura] = useState(null); // cartao object
+  const [formPag, setFormPag] = useState({ conta_id:"", valor:"", data:hoje() });
+  const [saving, setSaving] = useState(false);
+  const fp = k => v => setFormPag(p=>({...p,[k]:v}));
 
-  const doMes = transacoes.filter(t => { const d = new Date(t.data); return d.getMonth()+1 === mesN && d.getFullYear() === anoN; });
-  const recMes  = doMes.filter(t => t.tipo === "rec").reduce((s,t) => s + Number(t.valor), 0);
-  const despMes = doMes.filter(t => t.tipo === "desp").reduce((s,t) => s + Number(t.valor), 0);
+  const doMes   = transacoes.filter(t=>{ const d=new Date(t.data); return d.getMonth()+1===mesN&&d.getFullYear()===anoN; });
+  const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
+  const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const resultado = recMes - despMes;
+  const poupanca  = recMes>0?((resultado/recMes)*100).toFixed(1):0;
 
-  const recTotal  = recMes;
-  const despTotal = despMes;
-  const resultado = recTotal - despTotal;
-  const poupanca  = recTotal > 0 ? ((resultado / recTotal) * 100).toFixed(1) : 0;
-
-  const saldoContas = contas.filter(c => c.tipo !== "Cartão Crédito").reduce((s,c) => s + Number(c.saldo), 0);
-  const valorAtivos = ativos.reduce((s,a) => s + Number(a.atual||a.pmedio) * Number(a.qtd), 0);
+  const saldoContas = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const total = saldoContas + valorAtivos;
 
-  // Gráfico rec/desp por mês
-  const byMonth = useMemo(() => {
-    const meses = {};
-    transacoes.forEach(t => {
-      const d = new Date(t.data);
-      const key = `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getFullYear()).slice(2)}`;
-      if (!meses[key]) meses[key] = { rec: 0, desp: 0 };
-      if (t.tipo === "rec")  meses[key].rec  += Number(t.valor);
-      if (t.tipo === "desp") meses[key].desp += Number(t.valor);
-    });
-    return Object.entries(meses).slice(-6).map(([mes, v]) => ({ mes, ...v }));
-  }, [transacoes]);
+  // Fatura de cada cartão = compras não pagas
+  const cartoes = contas.filter(c=>c.tipo==="Cartão Crédito");
+  const faturas = cartoes.map(cartao => {
+    const compras = cartaoCompras.filter(c=>c.cartao_id===cartao.id);
+    const pagos   = cartaoPagamentos.filter(p=>p.cartao_id===cartao.id).reduce((s,p)=>s+Number(p.valor),0);
+    const totalCompras = compras.reduce((s,c)=>s+Number(c.valor),0);
+    const fatura  = Math.max(0, totalCompras - pagos);
+    return { ...cartao, fatura, totalCompras, pagos };
+  }).filter(c=>c.fatura>0);
 
-  // Gastos por categoria
-  const gastosCat = useMemo(() => {
-    const map = {};
-    doMes.filter(t => t.tipo === "desp").forEach(t => { map[t.cat||"Outros"] = (map[t.cat||"Outros"]||0) + Number(t.valor); });
-    return Object.entries(map).map(([nome, valor], i) => ({ nome, valor, cor: PALETTE[i % PALETTE.length] })).sort((a,b) => b.valor - a.valor).slice(0,7);
-  }, [doMes]);
+  const byMonth = useMemo(()=>{
+    const meses={};
+    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getFullYear()).slice(2)}`; if(!meses[key])meses[key]={rec:0,desp:0}; if(t.tipo==="rec")meses[key].rec+=Number(t.valor); if(t.tipo==="desp")meses[key].desp+=Number(t.valor); });
+    return Object.entries(meses).slice(-6).map(([mes,v])=>({mes,...v}));
+  },[transacoes]);
 
-  const ultimas  = [...transacoes].sort((a,b) => new Date(b.data) - new Date(a.data)).slice(0,6);
-  const proximas = transacoes.filter(t => t.tipo === "desp" && t.status === "pendente").sort((a,b) => new Date(a.data) - new Date(b.data)).slice(0,4);
+  const gastosCat = useMemo(()=>{
+    const map={};
+    doMes.filter(t=>t.tipo==="desp").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
+    return Object.entries(map).map(([nome,valor],i)=>({nome,valor,cor:PALETTE[i%PALETTE.length]})).sort((a,b)=>b.valor-a.valor).slice(0,7);
+  },[doMes]);
+
+  const ultimas  = [...transacoes].sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,6);
+  const proximas = transacoes.filter(t=>t.tipo==="desp"&&t.status==="pendente").sort((a,b)=>new Date(a.data)-new Date(b.data)).slice(0,4);
+
+  const pagarFatura = async () => {
+    if (!formPag.conta_id || !formPag.valor || !modalFatura) return;
+    setSaving(true);
+    const contaSelecionada = contas.find(c => c.nome === formPag.conta_id);
+    if (!contaSelecionada) { setSaving(false); return; }
+    // Registra pagamento
+    const pag = { id:uid(), cartao_id:modalFatura.id, conta_id:contaSelecionada.id, valor:Number(formPag.valor), data:formPag.data };
+    const ok = await db.insert("cartao_pagamentos", pag);
+    if (ok) {
+      setCartaoPagamentos(p=>[pag,...p]);
+      // Debita da conta
+      const novoSaldo = Number(contaSelecionada.saldo) - Number(formPag.valor);
+      await db.update("contas", contaSelecionada.id, { saldo: novoSaldo });
+      setContas(p=>p.map(c=>c.id===contaSelecionada.id?{...c,saldo:novoSaldo}:c));
+      // Lança como despesa nas transações
+      const despPag = { id:uid(), tipo:"desp", descricao:`Pagamento fatura ${modalFatura.nome}`, valor:Number(formPag.valor), data:formPag.data, cat:"Cartão Crédito", subcat:"", conta:contaSelecionada.nome, status:"pago", recorrencia:"nenhuma" };
+      await db.insert("transacoes", despPag);
+      setTransacoes(p=>[despPag,...p]);
+    }
+    setModalFatura(null);
+    setFormPag({conta_id:"",valor:"",data:hoje()});
+    setSaving(false);
+  };
 
   if (loading) return <Spinner />;
 
+  const contasBancarias = contas.filter(c=>c.tipo!=="Cartão Crédito");
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Hero patrimônio */}
-      <Card style={{ background: "linear-gradient(135deg, #0c1e18, #0a1428)", borderColor: C.accentGlow }}>
-        <div style={{ color: C.muted, fontSize: 10, letterSpacing: 2, textTransform: "uppercase" }}>Patrimônio Total</div>
-        <div style={{ color: C.accent, fontSize: 36, fontWeight: 900, fontFamily: "'DM Mono',monospace", margin: "6px 0 12px" }}>{fmt(total)}</div>
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <div><div style={{ color: C.muted, fontSize: 9 }}>EM CONTAS</div><div style={{ color: C.blue, fontWeight: 700 }}>{fmt(saldoContas)}</div></div>
-          <div><div style={{ color: C.muted, fontSize: 9 }}>INVESTIDO</div><div style={{ color: C.purple, fontWeight: 700 }}>{fmt(valorAtivos)}</div></div>
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Hero */}
+      <Card style={{background:"linear-gradient(135deg, #0c1e18, #0a1428)",borderColor:C.accentGlow}}>
+        <div style={{color:C.muted,fontSize:10,letterSpacing:2,textTransform:"uppercase"}}>Patrimônio Total</div>
+        <div style={{color:C.accent,fontSize:36,fontWeight:900,fontFamily:"'DM Mono',monospace",margin:"6px 0 12px"}}>{fmt(total)}</div>
+        <div style={{display:"flex",gap:24,flexWrap:"wrap"}}>
+          <div><div style={{color:C.muted,fontSize:9}}>EM CONTAS</div><div style={{color:C.blue,fontWeight:700}}>{fmt(saldoContas)}</div></div>
+          <div><div style={{color:C.muted,fontSize:9}}>INVESTIDO</div><div style={{color:C.purple,fontWeight:700}}>{fmt(valorAtivos)}</div></div>
         </div>
       </Card>
 
       {/* Stats do mês */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        <StatCard label="Receitas" value={fmt(recTotal)} color={C.accent} sub="mês atual" />
-        <StatCard label="Despesas" value={fmt(despTotal)} color={C.red} sub="mês atual" />
-        <StatCard label="Resultado" value={fmt(resultado)} color={resultado >= 0 ? C.accent : C.red} sub="saldo do mês" />
-        <StatCard label="Poupança" value={`${poupanca}%`} color={C.yellow} sub="da receita" />
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+        <StatCard label="Receitas"  value={fmt(recMes)}   color={C.accent} sub="mês atual" />
+        <StatCard label="Despesas"  value={fmt(despMes)}  color={C.red}    sub="mês atual" />
+        <StatCard label="Resultado" value={fmt(resultado)} color={resultado>=0?C.accent:C.red} sub="saldo do mês" />
+        <StatCard label="Poupança"  value={`${poupanca}%`} color={C.yellow} sub="da receita" />
       </div>
 
+      {/* Faturas dos cartões */}
+      {faturas.length > 0 && (
+        <Card style={{borderColor:C.red+"44"}}>
+          <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>💳 Faturas em Aberto</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {faturas.map(cartao=>(
+              <div key={cartao.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:10}}>
+                <div>
+                  <div style={{color:C.text,fontWeight:600,fontSize:13}}>{cartao.nome}</div>
+                  <div style={{color:C.muted,fontSize:11,marginTop:2}}>
+                    {cartao.vencimento?`Vence dia ${cartao.vencimento} · `:""}{cartao.totalCompras>0?`${fmt(cartao.totalCompras)} em compras`:""}
+                  </div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:16}}>{fmt(cartao.fatura)}</span>
+                  <Btn small onClick={()=>{setModalFatura(cartao);setFormPag({conta_id:"",valor:String(cartao.fatura.toFixed(2)),data:hoje()});}}>Pagar</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* Gráficos */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        {byMonth.length >= 2 && (
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
+        {byMonth.length>=2&&(
           <Card>
-            <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Receitas vs Despesas</div>
+            <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Receitas vs Despesas</div>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={byMonth}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis dataKey="mes" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.muted, fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                <XAxis dataKey="mes" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} />
+                <YAxis tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
                 <Tooltip content={<MiniTooltip />} />
                 <Bar dataKey="rec"  fill={C.accent} radius={[4,4,0,0]} name="Receitas" />
                 <Bar dataKey="desp" fill={C.red}    radius={[4,4,0,0]} name="Despesas" />
@@ -204,25 +280,17 @@ function Dashboard({ transacoes, contas, ativos, loading }) {
             </ResponsiveContainer>
           </Card>
         )}
-        {gastosCat.length > 0 && (
+        {gastosCat.length>0&&(
           <Card>
-            <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Gastos por Categoria</div>
-            <ResponsiveContainer width="100%" height={140}>
-              <PieChart>
-                <Pie data={gastosCat} dataKey="valor" cx="50%" cy="50%" innerRadius={35} outerRadius={60}>
-                  {gastosCat.map((c,i) => <Cell key={i} fill={c.cor} />)}
-                </Pie>
-                <Tooltip formatter={v => fmt(v)} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, fontSize: 11 }} />
-              </PieChart>
+            <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Por Categoria</div>
+            <ResponsiveContainer width="100%" height={130}>
+              <PieChart><Pie data={gastosCat} dataKey="valor" cx="50%" cy="50%" innerRadius={30} outerRadius={55}>{gastosCat.map((c,i)=><Cell key={i} fill={c.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
             </ResponsiveContainer>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
-              {gastosCat.slice(0,5).map((c,i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: c.cor, flexShrink: 0 }} />
-                    <span style={{ color: C.muted, fontSize: 11 }}>{c.nome}</span>
-                  </div>
-                  <span style={{ color: C.text, fontSize: 11, fontWeight: 700 }}>{fmt(c.valor)}</span>
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginTop:8}}>
+              {gastosCat.slice(0,5).map((c,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:c.cor,flexShrink:0}}/><span style={{color:C.muted,fontSize:11}}>{c.nome}</span></div>
+                  <span style={{color:C.text,fontSize:11,fontWeight:700}}>{fmt(c.valor)}</span>
                 </div>
               ))}
             </div>
@@ -230,149 +298,243 @@ function Dashboard({ transacoes, contas, ativos, loading }) {
         )}
       </div>
 
-      {/* Transações e proximas */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {/* Contas bancárias */}
+      {contasBancarias.length>0&&(
         <Card>
-          <div style={{ color: C.text, fontWeight: 700, marginBottom: 12, fontSize: 14 }}>Últimas Transações</div>
-          {ultimas.length === 0
-            ? <Empty icon="📋" msg="Nenhuma transação" sub="Adicione em Transações" />
-            : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {ultimas.map(t => (
-                  <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: C.surface, borderRadius: 10 }}>
-                    <div>
-                      <div style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{t.descricao}</div>
-                      <div style={{ color: C.muted, fontSize: 10 }}>{t.cat}{t.subcat ? ` › ${t.subcat}` : ""} · {t.data}</div>
-                    </div>
-                    <span style={{ color: t.tipo === "rec" ? C.accent : C.red, fontWeight: 800, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-                      {t.tipo === "rec" ? "+" : "−"}{fmt(t.valor)}
-                    </span>
-                  </div>
-                ))}
+          <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Saldo nas Contas</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+            {contasBancarias.map(c=>(
+              <div key={c.id} style={{background:C.surface,borderRadius:10,padding:"12px 14px",border:`1px solid ${(c.cor||C.accent)}33`}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:18}}>{c.icon}</span>
+                  <span style={{color:C.muted,fontSize:12}}>{c.nome}</span>
+                </div>
+                <div style={{color:c.cor||C.accent,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:16}}>{fmt(c.saldo)}</div>
               </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Últimas e próximas */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <Card>
+          <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Últimas Transações</div>
+          {ultimas.length===0?<Empty icon="📋" msg="Nenhuma transação" sub="Adicione em Transações"/>:
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {ultimas.map(t=>(
+                <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.surface,borderRadius:10}}>
+                  <div><div style={{color:C.text,fontSize:13,fontWeight:600}}>{t.descricao}</div><div style={{color:C.muted,fontSize:10}}>{t.cat}{t.subcat?` › ${t.subcat}`:""} · {t.data}</div></div>
+                  <span style={{color:t.tipo==="rec"?C.accent:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:13}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</span>
+                </div>
+              ))}
+            </div>
           }
         </Card>
         <Card>
-          <div style={{ color: C.text, fontWeight: 700, marginBottom: 12, fontSize: 14 }}>Próximas Contas</div>
-          {proximas.length === 0
-            ? <Empty icon="✅" msg="Sem pendências" sub="Nenhuma conta a pagar" />
-            : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {proximas.map(t => (
-                  <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: C.surface, borderRadius: 10 }}>
-                    <div>
-                      <div style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{t.descricao}</div>
-                      <div style={{ color: C.muted, fontSize: 10 }}>Vence {t.data}</div>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ color: C.red, fontWeight: 700, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>{fmt(t.valor)}</span>
-                      <Badge color={C.yellow}>pendente</Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Próximas Contas</div>
+          {proximas.length===0?<Empty icon="✅" msg="Sem pendências"/>:
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {proximas.map(t=>(
+                <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.surface,borderRadius:10}}>
+                  <div><div style={{color:C.text,fontSize:13,fontWeight:600}}>{t.descricao}</div><div style={{color:C.muted,fontSize:10}}>Vence {t.data}</div></div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{color:C.red,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:13}}>{fmt(t.valor)}</span><Badge color={C.yellow}>pendente</Badge></div>
+                </div>
+              ))}
+            </div>
           }
         </Card>
       </div>
+
+      {/* Modal pagar fatura */}
+      {modalFatura&&(
+        <Modal title={`Pagar Fatura — ${modalFatura.nome}`} onClose={()=>setModalFatura(null)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:10,padding:"10px 14px"}}>
+              <div style={{color:C.muted,fontSize:11}}>Fatura atual</div>
+              <div style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:22}}>{fmt(modalFatura.fatura)}</div>
+            </div>
+            <InputField label="Débito na Conta" value={formPag.conta_id} onChange={fp("conta_id")} options={contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome)} />
+            <InputField label="Valor a Pagar (R$)" value={formPag.valor} onChange={fp("valor")} type="number" placeholder="0,00" />
+            <InputField label="Data do Pagamento" value={formPag.data} onChange={fp("data")} type="date" />
+            <div style={{color:C.muted,fontSize:12}}>💡 O valor será debitado do saldo da conta selecionada na data informada.</div>
+            <Btn onClick={pagarFatura} full color={C.red}>{saving?"Processando...":"Confirmar Pagamento"}</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
 // ─── TRANSAÇÕES ───────────────────────────────────────────────────────────────
-function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
+function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, setCartaoCompras, loading }) {
+  const [tab, setTab] = useState("lancamentos");
   const [modal, setModal]   = useState(false);
+  const [modalCartao, setModalCartao] = useState(false);
   const [saving, setSaving] = useState(false);
   const [filtro, setFiltro] = useState("todos");
-  const [form, setForm]     = useState({ tipo: "desp", descricao: "", valor: "", data: hoje(), cat: "", subcat: "", conta: "", status: "pago", recorrencia: "nenhuma" });
-  const f = k => v => setForm(p => ({ ...p, [k]: v }));
+  const [form, setForm]     = useState({ tipo:"desp", descricao:"", valor:"", data:hoje(), cat:"", subcat:"", conta:"", status:"pago", recorrencia:"nenhuma" });
+  const [formCartao, setFormCartao] = useState({ cartao_id:"", descricao:"", valor:"", data:hoje(), cat:"", subcat:"" });
+  const f  = k => v => setForm(p=>({...p,[k]:v}));
+  const fc = k => v => setFormCartao(p=>({...p,[k]:v}));
 
-  const catAtual       = cats[form.tipo === "rec" ? "rec" : "desp"].find(c => c.nome === form.cat);
-  const subsDisponiveis = catAtual?.subs || [];
+  const catAtual        = cats[form.tipo==="rec"?"rec":"desp"].find(c=>c.nome===form.cat);
+  const subsDisponiveis = catAtual?.subs||[];
+  const cartoes         = contas.filter(c=>c.tipo==="Cartão Crédito");
 
   const salvar = async () => {
-    if (!form.descricao || !form.valor || !form.data) return;
+    if (!form.descricao||!form.valor||!form.data) return;
     setSaving(true);
-    const nova = { ...form, id: uid(), valor: Number(form.valor) };
-    await db.insert("transacoes", nova);
-    setTransacoes(p => [nova, ...p]);
+    const nova = {...form, id:uid(), valor:Number(form.valor)};
+    const ok = await db.insert("transacoes", nova);
+    if (ok) setTransacoes(p=>[nova,...p]);
     setModal(false);
-    setForm({ tipo: "desp", descricao: "", valor: "", data: hoje(), cat: "", subcat: "", conta: "", status: "pago", recorrencia: "nenhuma" });
+    setForm({tipo:"desp",descricao:"",valor:"",data:hoje(),cat:"",subcat:"",conta:"",status:"pago",recorrencia:"nenhuma"});
     setSaving(false);
   };
 
-  const excluir = async id => { await db.remove("transacoes", id); setTransacoes(p => p.filter(t => t.id !== id)); };
+  const salvarCartao = async () => {
+    if (!formCartao.cartao_id||!formCartao.descricao||!formCartao.valor) return;
+    setSaving(true);
+    const cartao = cartoes.find(c=>c.nome===formCartao.cartao_id);
+    if (!cartao) { setSaving(false); return; }
+    const nova = {...formCartao, id:uid(), cartao_id:cartao.id, valor:Number(formCartao.valor)};
+    const ok = await db.insert("cartao_compras", nova);
+    if (ok) setCartaoCompras(p=>[nova,...p]);
+    setModalCartao(false);
+    setFormCartao({cartao_id:"",descricao:"",valor:"",data:hoje(),cat:"",subcat:""});
+    setSaving(false);
+  };
 
-  const lista       = [...(filtro === "todos" ? transacoes : transacoes.filter(t => t.tipo === filtro))].sort((a,b) => new Date(b.data) - new Date(a.data));
-  const catOptions  = cats[form.tipo === "rec" ? "rec" : "desp"].map(c => c.nome);
-  const contaOpts   = contas.map(c => c.nome);
+  const excluir = async id => { await db.remove("transacoes",id); setTransacoes(p=>p.filter(t=>t.id!==id)); };
+  const excluirCompra = async id => { await db.remove("cartao_compras",id); setCartaoCompras(p=>p.filter(c=>c.id!==id)); };
+
+  const lista = [...(filtro==="todos"?transacoes:transacoes.filter(t=>t.tipo===filtro))].sort((a,b)=>new Date(b.data)-new Date(a.data));
+  const catOpts  = cats[form.tipo==="rec"?"rec":"desp"].map(c=>c.nome);
+  const catCartaoOpts = cats.desp.map(c=>c.nome);
+  const contaOpts = contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome);
+  const catCartaoAtual = cats.desp.find(c=>c.nome===formCartao.cat);
+  const subsCartao = catCartaoAtual?.subs||[];
 
   if (loading) return <Spinner />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {["todos","rec","desp"].map(f2 => (
-          <button key={f2} onClick={() => setFiltro(f2)} style={{ padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, background: filtro === f2 ? C.accent : C.surface, color: filtro === f2 ? C.bg : C.muted, fontFamily: "inherit" }}>
-            {f2 === "todos" ? "Todos" : f2 === "rec" ? "Receitas" : "Despesas"}
-          </button>
-        ))}
-        <Btn onClick={() => setModal(true)} small style={{ marginLeft: "auto" }}>+ Nova Transação</Btn>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Tabs */}
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <div style={{display:"flex",background:C.surface,borderRadius:10,padding:3,gap:2}}>
+          {[["lancamentos","Lançamentos"],["cartao","Compras no Cartão"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
+          ))}
+        </div>
+        {tab==="lancamentos"&&(
+          <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+            {["todos","rec","desp"].map(f2=>(
+              <button key={f2} onClick={()=>setFiltro(f2)} style={{padding:"6px 12px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:filtro===f2?C.accent:C.surface,color:filtro===f2?C.bg:C.muted,fontFamily:"inherit"}}>{f2==="todos"?"Todos":f2==="rec"?"Receitas":"Despesas"}</button>
+            ))}
+            <Btn onClick={()=>setModal(true)} small>+ Novo</Btn>
+          </div>
+        )}
+        {tab==="cartao"&&<Btn onClick={()=>setModalCartao(true)} small style={{marginLeft:"auto"}}>+ Compra no Cartão</Btn>}
       </div>
 
-      {lista.length === 0
-        ? <Card><Empty icon="💳" msg="Nenhuma transação" sub="Toque em '+ Nova Transação'" /></Card>
-        : <Card style={{ padding: 0, overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                  {["Descrição","Categoria","Conta","Data","Valor","Status",""].map((h,i) => (
-                    <th key={i} style={{ padding: "12px 16px", textAlign: "left", color: C.muted, fontSize: 10, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+      {/* Tab lançamentos */}
+      {tab==="lancamentos"&&(
+        lista.length===0
+          ?<Card><Empty icon="💳" msg="Nenhuma transação" sub="Toque em '+ Novo'"/></Card>
+          :<Card style={{padding:0,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Descrição","Categoria","Conta","Data","Valor","Status",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
-                {lista.map((t,i) => (
-                  <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}22`, background: i % 2 === 0 ? "transparent" : C.surface+"44" }}>
-                    <td style={{ padding: "11px 16px", color: C.text, fontSize: 13, fontWeight: 600 }}>{t.descricao}</td>
-                    <td style={{ padding: "11px 16px" }}>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {t.cat && <Badge color={t.tipo === "rec" ? C.accent : C.blue}>{t.cat}</Badge>}
-                        {t.subcat && <Badge color={C.purple}>{t.subcat}</Badge>}
-                      </div>
-                    </td>
-                    <td style={{ padding: "11px 16px", color: C.muted, fontSize: 12 }}>{t.conta || "—"}</td>
-                    <td style={{ padding: "11px 16px", color: C.muted, fontSize: 12, whiteSpace: "nowrap" }}>{t.data}</td>
-                    <td style={{ padding: "11px 16px", color: t.tipo === "rec" ? C.accent : C.red, fontWeight: 800, fontFamily: "'DM Mono',monospace", fontSize: 13, whiteSpace: "nowrap" }}>
-                      {t.tipo === "rec" ? "+" : "−"}{fmt(t.valor)}
-                    </td>
-                    <td style={{ padding: "11px 16px" }}><Badge color={t.status === "pago" ? C.accent : C.yellow}>{t.status}</Badge></td>
-                    <td style={{ padding: "11px 16px" }}><button onClick={() => excluir(t.id)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 14 }}>🗑</button></td>
+                {lista.map((t,i)=>(
+                  <tr key={t.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
+                    <td style={{padding:"11px 16px",color:C.text,fontSize:13,fontWeight:600}}>{t.descricao}</td>
+                    <td style={{padding:"11px 16px"}}><div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{t.cat&&<Badge color={t.tipo==="rec"?C.accent:C.blue}>{t.cat}</Badge>}{t.subcat&&<Badge color={C.purple}>{t.subcat}</Badge>}</div></td>
+                    <td style={{padding:"11px 16px",color:C.muted,fontSize:12}}>{t.conta||"—"}</td>
+                    <td style={{padding:"11px 16px",color:C.muted,fontSize:12,whiteSpace:"nowrap"}}>{t.data}</td>
+                    <td style={{padding:"11px 16px",color:t.tipo==="rec"?C.accent:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:13,whiteSpace:"nowrap"}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</td>
+                    <td style={{padding:"11px 16px"}}><Badge color={t.status==="pago"?C.accent:C.yellow}>{t.status}</Badge></td>
+                    <td style={{padding:"11px 16px"}}><button onClick={()=>excluir(t.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </Card>
-      }
+      )}
 
-      {modal && (
-        <Modal title="Nova Transação" onClose={() => setModal(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[["rec","Receita",C.accent],["desp","Despesa",C.red],["transf","Transferência",C.blue]].map(([tp,label,cor]) => (
-                <button key={tp} onClick={() => f("tipo")(tp)} style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, background: form.tipo === tp ? cor : C.surface, color: form.tipo === tp ? C.bg : C.muted, fontFamily: "inherit" }}>{label}</button>
+      {/* Tab compras no cartão */}
+      {tab==="cartao"&&(
+        cartaoCompras.length===0
+          ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
+          :<Card style={{padding:0,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Cartão","Descrição","Categoria","Data","Valor",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>
+                {[...cartaoCompras].sort((a,b)=>new Date(b.data)-new Date(a.data)).map((c,i)=>{
+                  const cartao = contas.find(ct=>ct.id===c.cartao_id);
+                  return (
+                    <tr key={c.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
+                      <td style={{padding:"11px 16px"}}><Badge color={C.purple}>{cartao?.nome||"—"}</Badge></td>
+                      <td style={{padding:"11px 16px",color:C.text,fontSize:13,fontWeight:600}}>{c.descricao}</td>
+                      <td style={{padding:"11px 16px"}}><div style={{display:"flex",gap:5}}>{c.cat&&<Badge color={C.blue}>{c.cat}</Badge>}{c.subcat&&<Badge color={C.purple}>{c.subcat}</Badge>}</div></td>
+                      <td style={{padding:"11px 16px",color:C.muted,fontSize:12}}>{c.data}</td>
+                      <td style={{padding:"11px 16px",color:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:13}}>−{fmt(c.valor)}</td>
+                      <td style={{padding:"11px 16px"}}><button onClick={()=>excluirCompra(c.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+      )}
+
+      {/* Modal novo lançamento */}
+      {modal&&(
+        <Modal title="Nova Transação" onClose={()=>setModal(false)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{display:"flex",gap:8}}>
+              {[["rec","Receita",C.accent],["desp","Despesa",C.red],["transf","Transferência",C.blue]].map(([tp,label,cor])=>(
+                <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
               ))}
             </div>
             <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado" />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
               <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
             </div>
-            <InputField label="Categoria" value={form.cat} onChange={v => { f("cat")(v); f("subcat")(""); }} options={catOptions.length ? catOptions : ["(configure em ⚙️)"]} />
-            {subsDisponiveis.length > 0 && <InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis} />}
-            {contaOpts.length > 0 && <InputField label="Conta / Cartão" value={form.conta} onChange={f("conta")} options={contaOpts} />}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]} />
-              <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]} />
+            <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]} />
+            {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
+            {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
+              <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
             </div>
-            <Btn onClick={salvar} full>{saving ? "Salvando..." : "Salvar Transação"}</Btn>
+            <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar Transação"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal compra no cartão */}
+      {modalCartao&&(
+        <Modal title="Compra no Cartão de Crédito" onClose={()=>setModalCartao(false)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {cartoes.length===0
+              ?<div style={{color:C.muted,textAlign:"center",padding:20}}>Nenhum cartão cadastrado. Adicione em Configurações → Cartões.</div>
+              :<>
+                <InputField label="Cartão" value={formCartao.cartao_id} onChange={fc("cartao_id")} options={cartoes.map(c=>c.nome)}/>
+                <InputField label="Descrição" value={formCartao.descricao} onChange={fc("descricao")} placeholder="Ex: iFood, Netflix..."/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <InputField label="Valor (R$)" value={formCartao.valor} onChange={fc("valor")} type="number" placeholder="0,00"/>
+                  <InputField label="Data" value={formCartao.data} onChange={fc("data")} type="date"/>
+                </div>
+                <InputField label="Categoria" value={formCartao.cat} onChange={v=>{fc("cat")(v);fc("subcat")("");}} options={catCartaoOpts}/>
+                {subsCartao.length>0&&<InputField label="Subcategoria" value={formCartao.subcat} onChange={fc("subcat")} options={subsCartao}/>}
+                <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:10,padding:"10px 14px",color:C.muted,fontSize:12}}>
+                  💡 Essa compra vai para a fatura do cartão. Para contabilizar como despesa, pague a fatura pelo Dashboard.
+                </div>
+                <Btn onClick={salvarCartao} full>{saving?"Salvando...":"Adicionar à Fatura"}</Btn>
+              </>
+            }
           </div>
         </Modal>
       )}
@@ -382,147 +544,100 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
 
 // ─── PATRIMÔNIO ───────────────────────────────────────────────────────────────
 function Patrimonio({ transacoes, contas, ativos, loading }) {
-  const saldoContas = contas.filter(c => c.tipo !== "Cartão Crédito").reduce((s,c) => s + Number(c.saldo), 0);
-  const valorAtivos = ativos.reduce((s,a) => s + Number(a.atual||a.pmedio) * Number(a.qtd), 0);
-  const total       = saldoContas + valorAtivos;
+  const saldoContas = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
+  const total = saldoContas + valorAtivos;
 
-  // Evolução mensal acumulada (baseada em transações)
-  const evolucao = useMemo(() => {
-    const map = {};
-    transacoes.forEach(t => {
-      const d = new Date(t.data);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      if (!map[key]) map[key] = { rec: 0, desp: 0 };
-      if (t.tipo === "rec")  map[key].rec  += Number(t.valor);
-      if (t.tipo === "desp") map[key].desp += Number(t.valor);
-    });
-    let acc = 0;
-    return Object.entries(map).sort().map(([k,v]) => {
-      acc += v.rec - v.desp;
-      return { mes: k.slice(5)+"/"+k.slice(2,4), resultado: v.rec - v.desp, acumulado: acc };
-    });
-  }, [transacoes]);
+  const evolucao = useMemo(()=>{
+    const map={};
+    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; if(!map[key])map[key]={rec:0,desp:0}; if(t.tipo==="rec")map[key].rec+=Number(t.valor); if(t.tipo==="desp")map[key].desp+=Number(t.valor); });
+    let acc=0;
+    return Object.entries(map).sort().map(([k,v])=>{ acc+=v.rec-v.desp; return {mes:k.slice(5)+"/"+k.slice(2,4),resultado:v.rec-v.desp,acumulado:acc}; });
+  },[transacoes]);
 
-  // Distribuição do patrimônio
   const distribuicao = [
-    { nome: "Contas",        valor: saldoContas, cor: C.blue },
-    { nome: "Investimentos", valor: valorAtivos,  cor: C.purple },
-  ].filter(d => d.valor > 0);
+    {nome:"Contas",valor:saldoContas,cor:C.blue},
+    {nome:"Investimentos",valor:valorAtivos,cor:C.purple},
+  ].filter(d=>d.valor>0);
 
   if (loading) return <Spinner />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Hero */}
-      <Card style={{ background: "linear-gradient(135deg, #0c1e18, #0a1428)", borderColor: C.accentGlow }}>
-        <div style={{ color: C.muted, fontSize: 10, letterSpacing: 2, textTransform: "uppercase" }}>Patrimônio Total</div>
-        <div style={{ color: C.accent, fontSize: 36, fontWeight: 900, fontFamily: "'DM Mono',monospace", margin: "6px 0 14px" }}>{fmt(total)}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
-          <div><div style={{ color: C.muted, fontSize: 9 }}>CONTAS BANCÁRIAS</div><div style={{ color: C.blue, fontWeight: 700, fontSize: 15 }}>{fmt(saldoContas)}</div></div>
-          <div><div style={{ color: C.muted, fontSize: 9 }}>INVESTIMENTOS</div><div style={{ color: C.purple, fontWeight: 700, fontSize: 15 }}>{fmt(valorAtivos)}</div></div>
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card style={{background:"linear-gradient(135deg, #0c1e18, #0a1428)",borderColor:C.accentGlow}}>
+        <div style={{color:C.muted,fontSize:10,letterSpacing:2,textTransform:"uppercase"}}>Patrimônio Total</div>
+        <div style={{color:C.accent,fontSize:36,fontWeight:900,fontFamily:"'DM Mono',monospace",margin:"6px 0 14px"}}>{fmt(total)}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16}}>
+          <div><div style={{color:C.muted,fontSize:9}}>CONTAS BANCÁRIAS</div><div style={{color:C.blue,fontWeight:700,fontSize:15}}>{fmt(saldoContas)}</div></div>
+          <div><div style={{color:C.muted,fontSize:9}}>INVESTIMENTOS</div><div style={{color:C.purple,fontWeight:700,fontSize:15}}>{fmt(valorAtivos)}</div></div>
         </div>
       </Card>
 
-      {/* Gráficos lado a lado */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        {evolucao.length >= 2
-          ? <Card>
-              <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Evolução do Resultado Acumulado</div>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={evolucao}>
-                  <defs>
-                    <linearGradient id="gradLinha" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={C.accent} stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor={C.accent} stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis dataKey="mes" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: C.muted, fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
-                  <Tooltip content={<MiniTooltip />} />
-                  <Line type="monotone" dataKey="acumulado" stroke={C.accent} strokeWidth={3} dot={{ fill: C.accent, r: 4, strokeWidth: 2, stroke: C.bg }} activeDot={{ r: 7 }} name="Acumulado" />
-                </LineChart>
-              </ResponsiveContainer>
-            </Card>
-          : <Card><Empty icon="📈" msg="Dados insuficientes" sub="Adicione transações para ver a evolução" /></Card>
-        }
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Distribuição pizza */}
-          <Card style={{ flex: 1 }}>
-            <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Distribuição</div>
-            {distribuicao.length > 0
-              ? <>
-                  <ResponsiveContainer width="100%" height={150}>
-                    <PieChart>
-                      <Pie data={distribuicao} dataKey="valor" cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={4}>
-                        {distribuicao.map((d,i) => <Cell key={i} fill={d.cor} />)}
-                      </Pie>
-                      <Tooltip formatter={v => fmt(v)} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, fontSize: 11 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-                    {distribuicao.map((d,i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 10, height: 10, borderRadius: "50%", background: d.cor }} />
-                          <span style={{ color: C.muted, fontSize: 12 }}>{d.nome}</span>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ color: C.text, fontSize: 12, fontWeight: 700 }}>{fmt(d.valor)}</div>
-                          <div style={{ color: C.muted, fontSize: 10 }}>{total > 0 ? ((d.valor/total)*100).toFixed(1) : 0}%</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              : <Empty icon="🏦" msg="Sem dados" sub="Adicione contas e ativos" />
-            }
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
+        {evolucao.length>=2
+          ?<Card>
+            <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Evolução do Resultado Acumulado</div>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={evolucao}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="mes" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`}/>
+                <Tooltip content={<MiniTooltip/>}/>
+                <Line type="monotone" dataKey="acumulado" stroke={C.accent} strokeWidth={3} dot={{fill:C.accent,r:4,strokeWidth:2,stroke:C.bg}} activeDot={{r:7}} name="Acumulado"/>
+              </LineChart>
+            </ResponsiveContainer>
           </Card>
-        </div>
+          :<Card><Empty icon="📈" msg="Dados insuficientes" sub="Adicione transações para ver a evolução"/></Card>
+        }
+        <Card>
+          <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Distribuição</div>
+          {distribuicao.length>0
+            ?<>
+              <ResponsiveContainer width="100%" height={150}>
+                <PieChart><Pie data={distribuicao} dataKey="valor" cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={4}>{distribuicao.map((d,i)=><Cell key={i} fill={d.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
+              </ResponsiveContainer>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+                {distribuicao.map((d,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:10,height:10,borderRadius:"50%",background:d.cor}}/><span style={{color:C.muted,fontSize:12}}>{d.nome}</span></div>
+                    <div style={{textAlign:"right"}}><div style={{color:C.text,fontSize:12,fontWeight:700}}>{fmt(d.valor)}</div><div style={{color:C.muted,fontSize:10}}>{total>0?((d.valor/total)*100).toFixed(1):0}%</div></div>
+                  </div>
+                ))}
+              </div>
+            </>
+            :<Empty icon="🏦" msg="Sem dados" sub="Adicione contas e ativos"/>
+          }
+        </Card>
       </div>
 
-      {/* Resultado mensal em barras */}
-      {evolucao.length >= 2 && (
+      {evolucao.length>=2&&(
         <Card>
-          <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Resultado por Mês</div>
+          <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Resultado por Mês</div>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={evolucao}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-              <XAxis dataKey="mes" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: C.muted, fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(1)}k`} />
-              <Tooltip content={<MiniTooltip />} />
-              <Bar dataKey="resultado" radius={[4,4,0,0]} name="Resultado">
-                {evolucao.map((d,i) => <Cell key={i} fill={d.resultado >= 0 ? C.accent : C.red} />)}
-              </Bar>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+              <XAxis dataKey="mes" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(1)}k`}/>
+              <Tooltip content={<MiniTooltip/>}/>
+              <Bar dataKey="resultado" radius={[4,4,0,0]} name="Resultado">{evolucao.map((d,i)=><Cell key={i} fill={d.resultado>=0?C.accent:C.red}/>)}</Bar>
             </BarChart>
           </ResponsiveContainer>
         </Card>
       )}
 
-      {/* Contas detalhadas */}
-      {contas.filter(c => c.tipo !== "Cartão Crédito").length > 0 && (
+      {contas.filter(c=>c.tipo!=="Cartão Crédito").length>0&&(
         <Card>
-          <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Saldo por Conta</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {contas.filter(c => c.tipo !== "Cartão Crédito").map(c => {
-              const pct = saldoContas > 0 ? (Number(c.saldo)/saldoContas)*100 : 0;
+          <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Saldo por Conta</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>{
+              const pct = saldoContas>0?(Number(c.saldo)/saldoContas)*100:0;
               return (
                 <div key={c.id}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 16 }}>{c.icon}</span>
-                      <span style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{c.nome}</span>
-                      <Badge color={c.cor||C.accent}>{c.tipo}</Badge>
-                    </div>
-                    <div style={{ display: "flex", gap: 12 }}>
-                      <span style={{ color: C.muted, fontSize: 12 }}>{pct.toFixed(1)}%</span>
-                      <span style={{ color: c.cor||C.accent, fontWeight: 700, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>{fmt(c.saldo)}</span>
-                    </div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>{c.icon}</span><span style={{color:C.text,fontSize:13,fontWeight:600}}>{c.nome}</span><Badge color={c.cor||C.accent}>{c.tipo}</Badge></div>
+                    <div style={{display:"flex",gap:12}}><span style={{color:C.muted,fontSize:12}}>{pct.toFixed(1)}%</span><span style={{color:c.cor||C.accent,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:13}}>{fmt(c.saldo)}</span></div>
                   </div>
-                  <div style={{ background: C.border, borderRadius: 4, height: 5 }}>
-                    <div style={{ background: c.cor||C.accent, height: "100%", width: `${pct}%`, borderRadius: 4 }} />
-                  </div>
+                  <div style={{background:C.border,borderRadius:4,height:5}}><div style={{background:c.cor||C.accent,height:"100%",width:`${pct}%`,borderRadius:4}}/></div>
                 </div>
               );
             })}
@@ -535,105 +650,157 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
 
 // ─── INVESTIMENTOS ────────────────────────────────────────────────────────────
 function Investimentos({ ativos, setAtivos, loading }) {
-  const [modal, setModal]   = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm]     = useState({ ticker: "", qtd: "", pmedio: "", atual: "", setor: "" });
-  const f = k => v => setForm(p => ({ ...p, [k]: v }));
+  const [modal, setModal]       = useState(false);
+  const [editModal, setEditModal] = useState(null); // ativo a editar
+  const [saving, setSaving]     = useState(false);
+  const [novoPreco, setNovoPreco] = useState("");
+  const [cotando, setCotando]   = useState(false);
+  const [form, setForm]         = useState({ ticker:"", qtd:"", pmedio:"", atual:"", setor:"" });
+  const f = k => v => setForm(p=>({...p,[k]:v}));
+
+  // Busca cotação via brapi.dev (suporta ações e ETFs brasileiros)
+  const buscarCotacao = async (ticker) => {
+    setCotando(true);
+    try {
+      const r = await fetch(`https://brapi.dev/api/quote/${ticker.toUpperCase()}?token=demo`);
+      if (r.ok) {
+        const data = await r.json();
+        const preco = data?.results?.[0]?.regularMarketPrice;
+        if (preco) return preco.toFixed(2);
+      }
+    } catch(e) { console.error("Cotação:", e); }
+    finally { setCotando(false); }
+    return null;
+  };
 
   const salvar = async () => {
-    if (!form.ticker || !form.qtd || !form.pmedio) return;
+    if (!form.ticker||!form.qtd||!form.pmedio) return;
     setSaving(true);
-    const novo = { ...form, id: uid(), qtd: Number(form.qtd), pmedio: Number(form.pmedio), atual: Number(form.atual||form.pmedio) };
-    await db.insert("ativos", novo);
-    setAtivos(p => [...p, novo]);
+    const novo = {...form, id:uid(), qtd:Number(form.qtd), pmedio:Number(form.pmedio), atual:Number(form.atual||form.pmedio)};
+    const ok = await db.insert("ativos", novo);
+    if (ok) setAtivos(p=>[...p,novo]);
     setModal(false);
-    setForm({ ticker: "", qtd: "", pmedio: "", atual: "", setor: "" });
+    setForm({ticker:"",qtd:"",pmedio:"",atual:"",setor:""});
     setSaving(false);
   };
-  const excluir = async id => { await db.remove("ativos", id); setAtivos(p => p.filter(a => a.id !== id)); };
 
-  const carteira = ativos.map((a,i) => ({ ...a, vinvest: Number(a.qtd)*Number(a.pmedio), vatual: Number(a.qtd)*Number(a.atual||a.pmedio), lucro: (Number(a.atual||a.pmedio)-Number(a.pmedio))*Number(a.qtd), pct: ((Number(a.atual||a.pmedio)-Number(a.pmedio))/Number(a.pmedio))*100, cor: PALETTE[i%PALETTE.length] }));
-  const totalInvest = carteira.reduce((s,a) => s+a.vinvest, 0);
-  const totalAtual  = carteira.reduce((s,a) => s+a.vatual,  0);
+  const salvarPreco = async () => {
+    if (!editModal||!novoPreco) return;
+    setSaving(true);
+    const ok = await db.update("ativos", editModal.id, { atual: Number(novoPreco) });
+    if (ok) setAtivos(p=>p.map(a=>a.id===editModal.id?{...a,atual:Number(novoPreco)}:a));
+    setEditModal(null);
+    setNovoPreco("");
+    setSaving(false);
+  };
+
+  const excluir = async id => { await db.remove("ativos",id); setAtivos(p=>p.filter(a=>a.id!==id)); };
+
+  const carteira = ativos.map((a,i)=>({
+    ...a,
+    vinvest: Number(a.qtd)*Number(a.pmedio),
+    vatual:  Number(a.qtd)*Number(a.atual||a.pmedio),
+    lucro:   (Number(a.atual||a.pmedio)-Number(a.pmedio))*Number(a.qtd),
+    pct:     ((Number(a.atual||a.pmedio)-Number(a.pmedio))/Number(a.pmedio))*100,
+    cor: PALETTE[i%PALETTE.length]
+  }));
+  const totalInvest = carteira.reduce((s,a)=>s+a.vinvest,0);
+  const totalAtual  = carteira.reduce((s,a)=>s+a.vatual,0);
   const lucroTotal  = totalAtual - totalInvest;
 
   if (loading) return <Spinner />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-        <StatCard label="Total Investido" value={fmt(totalInvest)} color={C.blue} />
-        <StatCard label="Valor Atual"     value={fmt(totalAtual)} />
-        <StatCard label="Resultado"       value={fmt(lucroTotal)} color={lucroTotal >= 0 ? C.accent : C.red} sub={totalInvest > 0 ? fmtPct((lucroTotal/totalInvest)*100) : ""} />
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+        <StatCard label="Total Investido" value={fmt(totalInvest)} color={C.blue}/>
+        <StatCard label="Valor Atual"     value={fmt(totalAtual)}/>
+        <StatCard label="Resultado"       value={fmt(lucroTotal)} color={lucroTotal>=0?C.accent:C.red} sub={totalInvest>0?fmtPct((lucroTotal/totalInvest)*100):""}/>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn small onClick={() => setModal(true)}>+ Ativo</Btn></div>
+      <div style={{display:"flex",justifyContent:"flex-end"}}><Btn small onClick={()=>setModal(true)}>+ Ativo</Btn></div>
 
-      {carteira.length === 0
-        ? <Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações para acompanhar" /></Card>
-        : <div style={{ display: "grid", gridTemplateColumns: carteira.length > 1 ? "2fr 1fr" : "1fr", gap: 16 }}>
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {["Ticker","Setor","Qtd","P.Médio","P.Atual","Investido","Atual","L/P","%",""].map((h,i) => (
-                      <th key={i} style={{ padding: "12px 14px", textAlign: "left", color: C.muted, fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
+      {carteira.length===0
+        ?<Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações e ETFs para acompanhar"/></Card>
+        :<div style={{display:"grid",gridTemplateColumns:carteira.length>1?"2fr 1fr":"1fr",gap:16}}>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Ticker","Setor","Qtd","P.Médio","P.Atual","Investido","Atual","L/P","%",""].map((h,i)=><th key={i} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <tbody>
+                {carteira.map((a,i)=>(
+                  <tr key={a.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
+                    <td style={{padding:"11px 14px"}}><Badge color={C.yellow}>{a.ticker}</Badge></td>
+                    <td style={{padding:"11px 14px",color:C.muted,fontSize:12}}>{a.setor||"—"}</td>
+                    <td style={{padding:"11px 14px",color:C.text,fontSize:12}}>{a.qtd}</td>
+                    <td style={{padding:"11px 14px",color:C.text,fontSize:12,fontFamily:"'DM Mono',monospace"}}>R${Number(a.pmedio).toFixed(2)}</td>
+                    <td style={{padding:"11px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{color:C.text,fontSize:12,fontFamily:"'DM Mono',monospace"}}>R${Number(a.atual||a.pmedio).toFixed(2)}</span>
+                        <button onClick={async()=>{setEditModal(a);setNovoPreco(String(a.atual||a.pmedio));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",color:C.accent,fontSize:10,fontWeight:700}}>✏️</button>
+                      </div>
+                    </td>
+                    <td style={{padding:"11px 14px",color:C.muted,fontSize:12}}>{fmt(a.vinvest)}</td>
+                    <td style={{padding:"11px 14px",color:C.text,fontSize:12}}>{fmt(a.vatual)}</td>
+                    <td style={{padding:"11px 14px",color:a.lucro>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontSize:12}}>{fmt(a.lucro)}</td>
+                    <td style={{padding:"11px 14px"}}><Badge color={a.pct>=0?C.accent:C.red}>{fmtPct(a.pct)}</Badge></td>
+                    <td style={{padding:"11px 14px"}}><button onClick={()=>excluir(a.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>🗑</button></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {carteira.map((a,i) => (
-                    <tr key={a.id} style={{ borderBottom: `1px solid ${C.border}22`, background: i%2===0?"transparent":C.surface+"44" }}>
-                      <td style={{ padding: "11px 14px" }}><Badge color={C.yellow}>{a.ticker}</Badge></td>
-                      <td style={{ padding: "11px 14px", color: C.muted, fontSize: 12 }}>{a.setor||"—"}</td>
-                      <td style={{ padding: "11px 14px", color: C.text, fontSize: 12 }}>{a.qtd}</td>
-                      <td style={{ padding: "11px 14px", color: C.text, fontSize: 12, fontFamily:"'DM Mono',monospace" }}>R${Number(a.pmedio).toFixed(2)}</td>
-                      <td style={{ padding: "11px 14px", color: C.text, fontSize: 12, fontFamily:"'DM Mono',monospace" }}>R${Number(a.atual||a.pmedio).toFixed(2)}</td>
-                      <td style={{ padding: "11px 14px", color: C.muted, fontSize: 12 }}>{fmt(a.vinvest)}</td>
-                      <td style={{ padding: "11px 14px", color: C.text, fontSize: 12 }}>{fmt(a.vatual)}</td>
-                      <td style={{ padding: "11px 14px", color: a.lucro>=0?C.accent:C.red, fontFamily:"'DM Mono',monospace", fontSize: 12 }}>{fmt(a.lucro)}</td>
-                      <td style={{ padding: "11px 14px" }}><Badge color={a.pct>=0?C.accent:C.red}>{fmtPct(a.pct)}</Badge></td>
-                      <td style={{ padding: "11px 14px" }}><button onClick={() => excluir(a.id)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer" }}>🗑</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+          {carteira.length>1&&(
+            <Card>
+              <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Alocação</div>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart><Pie data={carteira} dataKey="vatual" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3}>{carteira.map((a,i)=><Cell key={i} fill={a.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
+              </ResponsiveContainer>
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>
+                {carteira.map((a,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:a.cor}}/><span style={{color:C.muted,fontSize:12}}>{a.ticker}</span></div>
+                    <span style={{color:C.text,fontSize:12,fontWeight:700}}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</span>
+                  </div>
+                ))}
+              </div>
             </Card>
-            {carteira.length > 1 && (
-              <Card>
-                <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>Alocação</div>
-                <ResponsiveContainer width="100%" height={180}>
-                  <PieChart>
-                    <Pie data={carteira} dataKey="vatual" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3}>
-                      {carteira.map((a,i) => <Cell key={i} fill={a.cor} />)}
-                    </Pie>
-                    <Tooltip formatter={v => fmt(v)} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, fontSize: 11 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-                  {carteira.map((a,i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: a.cor }} /><span style={{ color: C.muted, fontSize: 12 }}>{a.ticker}</span></div>
-                      <span style={{ color: C.text, fontSize: 12, fontWeight: 700 }}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-          </div>
+          )}
+        </div>
       }
 
-      {modal && (
-        <Modal title="Novo Ativo" onClose={() => setModal(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <InputField label="Ticker" value={form.ticker} onChange={f("ticker")} placeholder="Ex: PETR4" />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <InputField label="Quantidade" value={form.qtd}    onChange={f("qtd")}    type="number" placeholder="0" />
-              <InputField label="Preço Médio" value={form.pmedio} onChange={f("pmedio")} type="number" placeholder="0,00" />
+      {/* Modal novo ativo */}
+      {modal&&(
+        <Modal title="Novo Ativo" onClose={()=>setModal(false)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <InputField label="Ticker (Ação ou ETF)" value={form.ticker} onChange={f("ticker")} placeholder="Ex: PETR4, BOVA11, IVVB11"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <InputField label="Quantidade" value={form.qtd}    onChange={f("qtd")}    type="number" placeholder="0"/>
+              <InputField label="Preço Médio" value={form.pmedio} onChange={f("pmedio")} type="number" placeholder="0,00"/>
             </div>
-            <InputField label="Preço Atual (opcional)" value={form.atual} onChange={f("atual")} type="number" placeholder="Vazio = igual ao médio" />
-            <InputField label="Setor" value={form.setor} onChange={f("setor")} placeholder="Ex: Energia" />
-            <Btn onClick={salvar} full>{saving ? "Salvando..." : "Salvar"}</Btn>
+            <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+              <div style={{flex:1}}><InputField label="Preço Atual (opcional)" value={form.atual} onChange={f("atual")} type="number" placeholder="Vazio = igual ao médio"/></div>
+              <Btn small outline onClick={async()=>{ if(!form.ticker) return; const p=await buscarCotacao(form.ticker); if(p) f("atual")(p); else alert("Cotação não encontrada. Verifique o ticker."); }}>{cotando?"...":"🔄 Buscar"}</Btn>
+            </div>
+            <InputField label="Setor" value={form.setor} onChange={f("setor")} placeholder="Ex: Energia, FII, ETF"/>
+            <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal editar preço atual */}
+      {editModal&&(
+        <Modal title={`Atualizar Preço — ${editModal.ticker}`} onClose={()=>setEditModal(null)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{background:C.surface,borderRadius:10,padding:"12px 14px"}}>
+              <div style={{color:C.muted,fontSize:11}}>Preço atual registrado</div>
+              <div style={{color:C.text,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:18}}>R$ {Number(editModal.atual||editModal.pmedio).toFixed(2)}</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+              <div style={{flex:1}}><InputField label="Novo Preço (R$)" value={novoPreco} onChange={setNovoPreco} type="number" placeholder="0,00"/></div>
+              <Btn small outline onClick={async()=>{ const p=await buscarCotacao(editModal.ticker); if(p) setNovoPreco(p); else alert("Cotação não encontrada."); }}>{cotando?"...":"🔄 Buscar"}</Btn>
+            </div>
+            <div style={{color:C.muted,fontSize:12}}>💡 Clique em "🔄 Buscar" para obter o preço atual via API (ações B3 e ETFs).</div>
+            <Btn onClick={salvarPreco} full>{saving?"Salvando...":"Atualizar Preço"}</Btn>
           </div>
         </Modal>
       )}
@@ -643,70 +810,57 @@ function Investimentos({ ativos, setAtivos, loading }) {
 
 // ─── RELATÓRIOS ───────────────────────────────────────────────────────────────
 function Relatorios({ transacoes, ativos, loading }) {
-  const now  = new Date();
-  const mesN = now.getMonth()+1, anoN = now.getFullYear();
-  const doMes = transacoes.filter(t => { const d=new Date(t.data); return d.getMonth()+1===mesN && d.getFullYear()===anoN; });
-  const doAno = transacoes.filter(t => new Date(t.data).getFullYear()===anoN);
-  const recMes  = doMes.filter(t => t.tipo==="rec").reduce((s,t)  => s+Number(t.valor),0);
-  const despMes = doMes.filter(t => t.tipo==="desp").reduce((s,t) => s+Number(t.valor),0);
-  const recAno  = doAno.filter(t => t.tipo==="rec").reduce((s,t)  => s+Number(t.valor),0);
-  const despAno = doAno.filter(t => t.tipo==="desp").reduce((s,t) => s+Number(t.valor),0);
-  const catDesp = {};
-  doMes.filter(t => t.tipo==="desp").forEach(t => { catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor); });
-  const topCat     = Object.entries(catDesp).sort((a,b) => b[1]-a[1]);
-  const totalAtual  = ativos.reduce((s,a) => s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
-  const totalInvest = ativos.reduce((s,a) => s+Number(a.pmedio)*Number(a.qtd),0);
-
-  const Row = ({ label, val, cor = C.text }) => (
-    <div style={{ display:"flex", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.border}` }}>
-      <span style={{ color: C.muted, fontSize: 13 }}>{label}</span>
-      <span style={{ color: cor, fontWeight: 700, fontFamily:"'DM Mono',monospace" }}>{val}</span>
+  const now=new Date(); const mesN=now.getMonth()+1,anoN=now.getFullYear();
+  const doMes = transacoes.filter(t=>{ const d=new Date(t.data); return d.getMonth()+1===mesN&&d.getFullYear()===anoN; });
+  const doAno = transacoes.filter(t=>new Date(t.data).getFullYear()===anoN);
+  const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
+  const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const recAno  = doAno.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
+  const despAno = doAno.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const catDesp={}; doMes.filter(t=>t.tipo==="desp").forEach(t=>{catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor);});
+  const topCat=Object.entries(catDesp).sort((a,b)=>b[1]-a[1]);
+  const totalAtual  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
+  const totalInvest = ativos.reduce((s,a)=>s+Number(a.pmedio)*Number(a.qtd),0);
+  const Row = ({label,val,cor=C.text}) => (
+    <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+      <span style={{color:C.muted,fontSize:13}}>{label}</span>
+      <span style={{color:cor,fontWeight:700,fontFamily:"'DM Mono',monospace"}}>{val}</span>
     </div>
   );
-
   if (loading) return <Spinner />;
-
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
       <Card>
-        <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>📅 Mês Atual</div>
-        <Row label="Receitas"        val={fmt(recMes)}  cor={C.accent} />
-        <Row label="Despesas"        val={fmt(despMes)} cor={C.red} />
-        <Row label="Resultado" val={fmt(recMes-despMes)} cor={recMes-despMes>=0?C.accent:C.red} />
-        <Row label="Taxa de Poupança" val={recMes>0?`${(((recMes-despMes)/recMes)*100).toFixed(1)}%`:"—"} cor={C.yellow} />
-        <Row label="Transações"      val={String(doMes.length)} />
+        <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📅 Mês Atual</div>
+        <Row label="Receitas"         val={fmt(recMes)}  cor={C.accent}/>
+        <Row label="Despesas"         val={fmt(despMes)} cor={C.red}/>
+        <Row label="Resultado"        val={fmt(recMes-despMes)} cor={recMes-despMes>=0?C.accent:C.red}/>
+        <Row label="Taxa de Poupança" val={recMes>0?`${(((recMes-despMes)/recMes)*100).toFixed(1)}%`:"—"} cor={C.yellow}/>
+        <Row label="Transações"       val={String(doMes.length)}/>
       </Card>
       <Card>
-        <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>📆 Ano Atual</div>
-        <Row label="Receitas"    val={fmt(recAno)}           cor={C.accent} />
-        <Row label="Despesas"    val={fmt(despAno)}          cor={C.red} />
-        <Row label="Resultado"   val={fmt(recAno-despAno)}   cor={recAno-despAno>=0?C.accent:C.red} />
-        <Row label="Transações"  val={String(doAno.length)} />
+        <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📆 Ano Atual</div>
+        <Row label="Receitas"   val={fmt(recAno)}         cor={C.accent}/>
+        <Row label="Despesas"   val={fmt(despAno)}        cor={C.red}/>
+        <Row label="Resultado"  val={fmt(recAno-despAno)} cor={recAno-despAno>=0?C.accent:C.red}/>
+        <Row label="Transações" val={String(doAno.length)}/>
       </Card>
-      <Card>
-        <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>📊 Investimentos</div>
-        <Row label="Total Investido"    val={fmt(totalInvest)}             cor={C.blue} />
-        <Row label="Valor Atual"        val={fmt(totalAtual)} />
-        <Row label="Resultado Carteira" val={fmt(totalAtual-totalInvest)} cor={totalAtual-totalInvest>=0?C.accent:C.red} />
+      <Card style={{gridColumn:"span 2"}}>
+        <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📊 Investimentos</div>
+        <Row label="Total Investido"    val={fmt(totalInvest)}            cor={C.blue}/>
+        <Row label="Valor Atual"        val={fmt(totalAtual)}/>
+        <Row label="Resultado Carteira" val={fmt(totalAtual-totalInvest)} cor={totalAtual-totalInvest>=0?C.accent:C.red}/>
       </Card>
-      {topCat.length > 0 && (
-        <Card style={{ gridColumn: "span 2" }}>
-          <div style={{ color: C.text, fontWeight: 700, marginBottom: 14, fontSize: 14 }}>🏷 Gastos por Categoria (mês)</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {topCat.map(([cat, val], i) => {
-              const pct = despMes > 0 ? (val/despMes)*100 : 0;
-              return (
-                <div key={i}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ color: C.text, fontSize: 13 }}>{cat}</span>
-                    <span style={{ color: C.muted, fontSize: 12 }}>{fmt(val)} · {pct.toFixed(1)}%</span>
-                  </div>
-                  <div style={{ background: C.border, borderRadius: 4, height: 6 }}>
-                    <div style={{ background: PALETTE[i%PALETTE.length], height:"100%", width:`${pct}%`, borderRadius: 4 }} />
-                  </div>
-                </div>
-              );
-            })}
+      {topCat.length>0&&(
+        <Card style={{gridColumn:"span 2"}}>
+          <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>🏷 Gastos por Categoria (mês)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {topCat.map(([cat,val],i)=>{ const pct=despMes>0?(val/despMes)*100:0; return (
+              <div key={i}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:C.text,fontSize:13}}>{cat}</span><span style={{color:C.muted,fontSize:12}}>{fmt(val)} · {pct.toFixed(1)}%</span></div>
+                <div style={{background:C.border,borderRadius:4,height:6}}><div style={{background:PALETTE[i%PALETTE.length],height:"100%",width:`${pct}%`,borderRadius:4}}/></div>
+              </div>
+            ); })}
           </div>
         </Card>
       )}
@@ -723,87 +877,94 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
   const [nomeCat, setNomeCat]     = useState("");
   const [nomeSub, setNomeSub]     = useState("");
   const [saving, setSaving]       = useState(false);
+  const [editSaldo, setEditSaldo] = useState(null);
+  const [novoSaldo, setNovoSaldo] = useState("");
   const [formConta, setFormConta] = useState({ nome:"", saldo:"", tipo:"Conta Corrente", icon:"🏦", vencimento:"", limite:"" });
-  const fc = k => v => setFormConta(p => ({ ...p, [k]: v }));
+  const fc = k => v => setFormConta(p=>({...p,[k]:v}));
 
   const addCat = async tipo => {
     if (!nomeCat.trim()) return; setSaving(true);
-    const nova = { id: uid(), nome: nomeCat.trim(), subs: [] };
-    await db.insert("cats", { ...nova, tipo, subs: JSON.stringify([]) });
-    setCats(p => ({ ...p, [tipo]: [...p[tipo], nova] }));
+    const nova = {id:uid(),nome:nomeCat.trim(),subs:[]};
+    const ok = await db.insert("cats",{...nova,tipo,subs:JSON.stringify([])});
+    if (ok) setCats(p=>({...p,[tipo]:[...p[tipo],nova]}));
     setNomeCat(""); setModalCat(null); setSaving(false);
   };
-  const delCat = async (tipo, id) => { await db.remove("cats", id); setCats(p => ({ ...p, [tipo]: p[tipo].filter(c => c.id !== id) })); };
-  const addSub = async (tipo, catId) => {
+  const delCat = async (tipo,id) => { const ok=await db.remove("cats",id); if(ok) setCats(p=>({...p,[tipo]:p[tipo].filter(c=>c.id!==id)})); };
+  const addSub = async (tipo,catId) => {
     if (!nomeSub.trim()) return; setSaving(true);
-    const cat = cats[tipo].find(c => c.id === catId);
-    const newSubs = [...cat.subs, nomeSub.trim()];
-    await db.update("cats", catId, { subs: JSON.stringify(newSubs) });
-    setCats(p => ({ ...p, [tipo]: p[tipo].map(c => c.id === catId ? { ...c, subs: newSubs } : c) }));
+    const cat=cats[tipo].find(c=>c.id===catId);
+    const newSubs=[...cat.subs,nomeSub.trim()];
+    const ok=await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
+    if (ok) setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
     setNomeSub(""); setModalSub(null); setSaving(false);
   };
-  const delSub = async (tipo, catId, sub) => {
-    const cat = cats[tipo].find(c => c.id === catId);
-    const newSubs = cat.subs.filter(s => s !== sub);
-    await db.update("cats", catId, { subs: JSON.stringify(newSubs) });
-    setCats(p => ({ ...p, [tipo]: p[tipo].map(c => c.id === catId ? { ...c, subs: newSubs } : c) }));
+  const delSub = async (tipo,catId,sub) => {
+    const cat=cats[tipo].find(c=>c.id===catId);
+    const newSubs=cat.subs.filter(s=>s!==sub);
+    const ok=await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
+    if (ok) setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
   };
   const addConta = async () => {
     if (!formConta.nome) return; setSaving(true);
-    const nova = { ...formConta, id: uid(), saldo: Number(formConta.saldo||0), cor: PALETTE[contas.length%PALETTE.length] };
-    await db.insert("contas", nova);
-    setContas(p => [...p, nova]);
-    setFormConta({ nome:"", saldo:"", tipo:"Conta Corrente", icon:"🏦", vencimento:"", limite:"" });
+    const nova={...formConta,id:uid(),saldo:Number(formConta.saldo||0),cor:PALETTE[contas.length%PALETTE.length]};
+    const ok=await db.insert("contas",nova);
+    if (ok) setContas(p=>[...p,nova]);
+    setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦",vencimento:"",limite:""});
     setModalConta(false); setSaving(false);
   };
-  const delConta = async id => { await db.remove("contas", id); setContas(p => p.filter(c => c.id !== id)); };
+  const delConta = async id => { const ok=await db.remove("contas",id); if(ok) setContas(p=>p.filter(c=>c.id!==id)); };
+  const salvarSaldo = async () => {
+    if (!editSaldo) return; setSaving(true);
+    const ok=await db.update("contas",editSaldo.id,{saldo:Number(novoSaldo)});
+    if (ok) setContas(p=>p.map(c=>c.id===editSaldo.id?{...c,saldo:Number(novoSaldo)}:c));
+    setEditSaldo(null); setNovoSaldo(""); setSaving(false);
+  };
 
-  const TABS = [
-    { id:"contas",   label:"Contas",    icon:"🏦" },
-    { id:"cartoes",  label:"Cartões",   icon:"💳" },
-    { id:"cat-desp", label:"Despesas",  icon:"📤" },
-    { id:"cat-rec",  label:"Receitas",  icon:"📥" },
-  ];
-  const tipo = tab === "cat-rec" ? "rec" : "desp";
-  const contasFiltradas = tab === "contas" ? contas.filter(c => c.tipo !== "Cartão Crédito") : contas.filter(c => c.tipo === "Cartão Crédito");
-  const STATUS_COR = { "Conta Corrente": C.blue, "Poupança": C.accent, "Corretora": C.purple, "Carteira": C.yellow, "Cartão Crédito": C.red };
+  const TABS = [{id:"contas",label:"Contas",icon:"🏦"},{id:"cartoes",label:"Cartões",icon:"💳"},{id:"cat-desp",label:"Despesas",icon:"📤"},{id:"cat-rec",label:"Receitas",icon:"📥"}];
+  const tipo = tab==="cat-rec"?"rec":"desp";
+  const contasFiltradas = tab==="contas"?contas.filter(c=>c.tipo!=="Cartão Crédito"):contas.filter(c=>c.tipo==="Cartão Crédito");
 
   if (loading) return <Spinner />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", background: C.surface, borderRadius: 12, padding: 4, gap: 2 }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex:1, padding:"9px 4px", borderRadius:9, border:"none", cursor:"pointer", background: tab===t.id ? C.card : "transparent", color: tab===t.id ? C.text : C.muted, fontWeight: tab===t.id ? 700 : 500, fontSize:12, fontFamily:"inherit", display:"flex", flexDirection:"column", alignItems:"center", gap:3, boxShadow: tab===t.id ? `0 0 0 1px ${C.border}` : "none" }}>
-            <span style={{ fontSize:16 }}>{t.icon}</span><span>{t.label}</span>
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",background:C.surface,borderRadius:12,padding:4,gap:2}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"9px 4px",borderRadius:9,border:"none",cursor:"pointer",background:tab===t.id?C.card:"transparent",color:tab===t.id?C.text:C.muted,fontWeight:tab===t.id?700:500,fontSize:12,fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:3,boxShadow:tab===t.id?`0 0 0 1px ${C.border}`:"none"}}>
+            <span style={{fontSize:16}}>{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
       </div>
 
-      {(tab === "contas" || tab === "cartoes") && (
+      {(tab==="contas"||tab==="cartoes")&&(
         <>
-          <div style={{ display:"flex", justifyContent:"flex-end" }}>
-            <Btn small onClick={() => { if(tab==="cartoes") setFormConta(p=>({...p,tipo:"Cartão Crédito",icon:"💳"})); setModalConta(true); }}>+ {tab==="contas"?"Conta":"Cartão"}</Btn>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <Btn small onClick={()=>{ if(tab==="cartoes") setFormConta(p=>({...p,tipo:"Cartão Crédito",icon:"💳"})); setModalConta(true); }}>+ {tab==="contas"?"Conta":"Cartão"}</Btn>
           </div>
-          {contasFiltradas.length === 0
-            ? <Card><Empty icon={tab==="contas"?"🏦":"💳"} msg={tab==="contas"?"Nenhuma conta":"Nenhum cartão"} sub="Adicione usando o botão acima" /></Card>
-            : contasFiltradas.map(c => (
-              <Card key={c.id} style={{ borderColor:(c.cor||C.accent)+"44" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ width:44, height:44, background:(c.cor||C.accent)+"22", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>{c.icon}</div>
+          {contasFiltradas.length===0
+            ?<Card><Empty icon={tab==="contas"?"🏦":"💳"} msg={tab==="contas"?"Nenhuma conta":"Nenhum cartão"} sub="Adicione usando o botão acima"/></Card>
+            :contasFiltradas.map(c=>(
+              <Card key={c.id} style={{borderColor:(c.cor||C.accent)+"44"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{width:44,height:44,background:(c.cor||C.accent)+"22",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{c.icon}</div>
                     <div>
-                      <div style={{ color:C.text, fontWeight:700, fontSize:15 }}>{c.nome}</div>
-                      <div style={{ display:"flex", gap:6, marginTop:4, flexWrap:"wrap" }}>
+                      <div style={{color:C.text,fontWeight:700,fontSize:15}}>{c.nome}</div>
+                      <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                         <Badge color={c.cor||C.accent}>{c.tipo}</Badge>
-                        {c.vencimento && <Badge color={C.yellow}>Vence dia {c.vencimento}</Badge>}
-                        {c.limite && <Badge color={C.blue}>Limite {fmt(c.limite)}</Badge>}
+                        {c.vencimento&&<Badge color={C.yellow}>Vence dia {c.vencimento}</Badge>}
+                        {c.limite&&<Badge color={C.blue}>Limite {fmt(c.limite)}</Badge>}
                       </div>
                     </div>
                   </div>
-                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
-                    {c.tipo !== "Cartão Crédito" && <div style={{ color:c.cor||C.accent, fontSize:20, fontWeight:900, fontFamily:"'DM Mono',monospace" }}>{fmt(c.saldo)}</div>}
-                    <button onClick={() => delConta(c.id)} style={{ background:C.red+"18", border:`1px solid ${C.red}33`, color:C.red, borderRadius:7, padding:"4px 10px", cursor:"pointer", fontSize:11, fontWeight:700 }}>Remover</button>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                    {c.tipo!=="Cartão Crédito"&&(
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{color:c.cor||C.accent,fontSize:20,fontWeight:900,fontFamily:"'DM Mono',monospace"}}>{fmt(c.saldo)}</div>
+                        <button onClick={()=>{setEditSaldo(c);setNovoSaldo(String(c.saldo));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",color:C.accent,fontSize:11,fontWeight:700}}>✏️ Editar</button>
+                      </div>
+                    )}
+                    <button onClick={()=>delConta(c.id)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,color:C.red,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Remover</button>
                   </div>
                 </div>
               </Card>
@@ -812,52 +973,60 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
         </>
       )}
 
-      {(tab === "cat-desp" || tab === "cat-rec") && (
+      {(tab==="cat-desp"||tab==="cat-rec")&&(
         <>
-          <div style={{ display:"flex", justifyContent:"flex-end" }}>
-            <Btn small onClick={() => setModalCat(tipo)}>+ Categoria</Btn>
-          </div>
-          {cats[tipo].map(cat => (
+          <div style={{display:"flex",justifyContent:"flex-end"}}><Btn small onClick={()=>setModalCat(tipo)}>+ Categoria</Btn></div>
+          {cats[tipo].length===0&&<Card><Empty icon="🏷" msg="Nenhuma categoria" sub="Adicione usando o botão acima"/></Card>}
+          {cats[tipo].map(cat=>(
             <Card key={cat.id}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: cat.subs.length>0?12:0 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <div style={{ width:8, height:8, borderRadius:"50%", background: tipo==="desp"?C.red:C.accent }} />
-                  <span style={{ color:C.text, fontWeight:700, fontSize:14 }}>{cat.nome}</span>
-                  <span style={{ color:C.muted, fontSize:11 }}>{cat.subs.length} subs</span>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:cat.subs.length>0?12:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:tipo==="desp"?C.red:C.accent}}/>
+                  <span style={{color:C.text,fontWeight:700,fontSize:14}}>{cat.nome}</span>
+                  <span style={{color:C.muted,fontSize:11}}>{cat.subs.length} subs</span>
                 </div>
-                <div style={{ display:"flex", gap:6 }}>
-                  <Btn small outline onClick={() => setModalSub({ tipo, catId:cat.id })}>+ Sub</Btn>
-                  <button onClick={() => delCat(tipo, cat.id)} style={{ background:C.red+"18", border:`1px solid ${C.red}33`, color:C.red, borderRadius:8, padding:"5px 10px", cursor:"pointer", fontSize:12, fontWeight:700 }}>✕</button>
+                <div style={{display:"flex",gap:6}}>
+                  <Btn small outline onClick={()=>setModalSub({tipo,catId:cat.id})}>+ Sub</Btn>
+                  <button onClick={()=>delCat(tipo,cat.id)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,color:C.red,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>✕</button>
                 </div>
               </div>
-              {cat.subs.length > 0 && (
-                <div style={{ display:"flex", flexWrap:"wrap", gap:7, paddingTop:8, borderTop:`1px solid ${C.border}` }}>
-                  {cat.subs.map(sub => (
-                    <div key={sub} style={{ display:"flex", alignItems:"center", gap:5, background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:"4px 10px 4px 12px" }}>
-                      <span style={{ color:C.text, fontSize:12 }}>{sub}</span>
-                      <button onClick={() => delSub(tipo, cat.id, sub)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, padding:"0 0 0 2px" }}>×</button>
+              {cat.subs.length>0&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:7,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
+                  {cat.subs.map(sub=>(
+                    <div key={sub} style={{display:"flex",alignItems:"center",gap:5,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"4px 10px 4px 12px"}}>
+                      <span style={{color:C.text,fontSize:12}}>{sub}</span>
+                      <button onClick={()=>delSub(tipo,cat.id,sub)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"0 0 0 2px"}}>×</button>
                     </div>
                   ))}
                 </div>
               )}
             </Card>
           ))}
-          {cats[tipo].length === 0 && <Card><Empty icon="🏷" msg="Nenhuma categoria" sub="Adicione usando o botão acima" /></Card>}
         </>
       )}
 
-      {modalCat && <Modal title={`Nova Categoria — ${modalCat==="rec"?"Receita":"Despesa"}`} onClose={() => { setModalCat(null); setNomeCat(""); }}><div style={{ display:"flex", flexDirection:"column", gap:14 }}><InputField label="Nome" value={nomeCat} onChange={setNomeCat} placeholder="Ex: Moradia" /><Btn onClick={() => addCat(modalCat)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
-      {modalSub && <Modal title={`Nova Subcategoria — ${cats[modalSub.tipo].find(c=>c.id===modalSub.catId)?.nome}`} onClose={() => { setModalSub(null); setNomeSub(""); }}><div style={{ display:"flex", flexDirection:"column", gap:14 }}><InputField label="Nome" value={nomeSub} onChange={setNomeSub} placeholder="Ex: Aluguel" /><Btn onClick={() => addSub(modalSub.tipo, modalSub.catId)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
+      {/* Modais */}
+      {modalCat&&<Modal title={`Nova Categoria — ${modalCat==="rec"?"Receita":"Despesa"}`} onClose={()=>{setModalCat(null);setNomeCat("");}}><div style={{display:"flex",flexDirection:"column",gap:14}}><InputField label="Nome" value={nomeCat} onChange={setNomeCat} placeholder="Ex: Moradia"/><Btn onClick={()=>addCat(modalCat)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
+      {modalSub&&<Modal title={`Nova Subcategoria — ${cats[modalSub.tipo].find(c=>c.id===modalSub.catId)?.nome}`} onClose={()=>{setModalSub(null);setNomeSub("");}}><div style={{display:"flex",flexDirection:"column",gap:14}}><InputField label="Nome" value={nomeSub} onChange={setNomeSub} placeholder="Ex: Aluguel"/><Btn onClick={()=>addSub(modalSub.tipo,modalSub.catId)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
 
-      {modalConta && (
-        <Modal title={formConta.tipo==="Cartão Crédito"?"Novo Cartão":"Nova Conta"} onClose={() => { setModalConta(false); setFormConta({ nome:"", saldo:"", tipo:"Conta Corrente", icon:"🏦", vencimento:"", limite:"" }); }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <InputField label="Nome" value={formConta.nome} onChange={fc("nome")} placeholder="Ex: Nubank" />
-            <InputField label="Tipo" value={formConta.tipo} onChange={fc("tipo")} options={["Conta Corrente","Poupança","Corretora","Carteira","Cartão Crédito"]} />
-            <InputField label="Emoji" value={formConta.icon} onChange={fc("icon")} placeholder="🏦" />
-            {formConta.tipo !== "Cartão Crédito"
-              ? <InputField label="Saldo Atual (R$)" value={formConta.saldo} onChange={fc("saldo")} type="number" placeholder="0,00" />
-              : <><InputField label="Dia de Vencimento" value={formConta.vencimento} onChange={fc("vencimento")} type="number" placeholder="Ex: 10" /><InputField label="Limite (R$)" value={formConta.limite} onChange={fc("limite")} type="number" placeholder="0,00" /></>
+      {editSaldo&&(
+        <Modal title={`Editar Saldo — ${editSaldo.nome}`} onClose={()=>setEditSaldo(null)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <InputField label="Novo Saldo (R$)" value={novoSaldo} onChange={setNovoSaldo} type="number" placeholder="0,00"/>
+            <Btn onClick={salvarSaldo} full>{saving?"Salvando...":"Salvar Saldo"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {modalConta&&(
+        <Modal title={formConta.tipo==="Cartão Crédito"?"Novo Cartão":"Nova Conta"} onClose={()=>{setModalConta(false);setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦",vencimento:"",limite:""});}}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <InputField label="Nome" value={formConta.nome} onChange={fc("nome")} placeholder="Ex: Nubank"/>
+            <InputField label="Tipo" value={formConta.tipo} onChange={fc("tipo")} options={["Conta Corrente","Poupança","Corretora","Carteira","Cartão Crédito"]}/>
+            <InputField label="Emoji" value={formConta.icon} onChange={fc("icon")} placeholder="🏦"/>
+            {formConta.tipo!=="Cartão Crédito"
+              ?<InputField label="Saldo Inicial (R$)" value={formConta.saldo} onChange={fc("saldo")} type="number" placeholder="0,00"/>
+              :<><InputField label="Dia de Vencimento" value={formConta.vencimento} onChange={fc("vencimento")} type="number" placeholder="Ex: 10"/><InputField label="Limite (R$)" value={formConta.limite} onChange={fc("limite")} type="number" placeholder="0,00"/></>
             }
             <Btn onClick={addConta} full>{saving?"Salvando...":"Salvar"}</Btn>
           </div>
@@ -872,118 +1041,106 @@ const NAV = [
   { id:"dashboard",     label:"Início",        icon:"◈", desc:"Resumo do mês" },
   { id:"transacoes",    label:"Transações",    icon:"⇄", desc:"Receitas e despesas" },
   { id:"patrimonio",    label:"Patrimônio",    icon:"▲", desc:"Evolução e distribuição" },
-  { id:"investimentos", label:"Carteira",      icon:"◆", desc:"Ações e ativos" },
+  { id:"investimentos", label:"Carteira",      icon:"◆", desc:"Ações e ETFs" },
   { id:"relatorios",    label:"Relatórios",    icon:"≡", desc:"Análises" },
   { id:"config",        label:"Configurações", icon:"⚙", desc:"Contas e categorias" },
 ];
 
 export default function App() {
-  const [screen, setScreen]         = useState("dashboard");
-  const [transacoes, setTransacoes] = useState([]);
-  const [contas, setContas]         = useState([]);
-  const [ativos, setAtivos]         = useState([]);
-  const [cats, setCats]             = useState(DEFAULT_CATS);
-  const [loading, setLoading]       = useState(true);
-  const isDesktop                   = useIsDesktop();
+  const [screen, setScreen]               = useState("dashboard");
+  const [transacoes, setTransacoes]       = useState([]);
+  const [contas, setContas]               = useState([]);
+  const [ativos, setAtivos]               = useState([]);
+  const [cats, setCats]                   = useState(DEFAULT_CATS);
+  const [cartaoCompras, setCartaoCompras] = useState([]);
+  const [cartaoPagamentos, setCartaoPagamentos] = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const isDesktop                         = useIsDesktop();
 
-  useEffect(() => {
+  useEffect(()=>{
     async function fetchAll() {
       setLoading(true);
       try {
-        const [t, c, a, ct] = await Promise.all([
+        const [t,c,a,ct,cc,cp] = await Promise.all([
           db.get("transacoes"), db.get("contas"), db.get("ativos"),
-          db.get("cats"),
+          db.get("cats"), db.get("cartao_compras"), db.get("cartao_pagamentos"),
         ]);
         setTransacoes(t||[]);
         setContas(c||[]);
         setAtivos(a||[]);
-        if (ct?.length > 0) {
-          const rebuilt = { rec:[], desp:[] };
-          ct.forEach(row => {
-            if (row.tipo==="rec"||row.tipo==="desp")
-              rebuilt[row.tipo].push({ id:row.id, nome:row.nome, subs: Array.isArray(row.subs)?row.subs:(typeof row.subs==="string"?JSON.parse(row.subs):[]) });
-          });
+        setCartaoCompras(cc||[]);
+        setCartaoPagamentos(cp||[]);
+        if (ct?.length>0) {
+          const rebuilt={rec:[],desp:[]};
+          ct.forEach(row=>{ if(row.tipo==="rec"||row.tipo==="desp") rebuilt[row.tipo].push({id:row.id,nome:row.nome,subs:Array.isArray(row.subs)?row.subs:(typeof row.subs==="string"?JSON.parse(row.subs):[])}); });
           if (rebuilt.rec.length>0||rebuilt.desp.length>0) setCats(rebuilt);
         }
-      } catch(e) {
-        console.error("Erro ao carregar dados:", e);
-      } finally {
-        setLoading(false);
-      }
+      } catch(e) { console.error("fetchAll:",e); }
+      finally { setLoading(false); }
     }
     fetchAll();
-  }, []);
+  },[]);
 
-  const cur   = NAV.find(n => n.id === screen);
-  const props = { transacoes, contas, ativos, cats, loading };
+  const cur   = NAV.find(n=>n.id===screen);
+  const props = { transacoes, contas, ativos, cats, cartaoCompras, cartaoPagamentos, loading };
 
   const renderScreen = () => {
     switch(screen) {
-      case "dashboard":     return <Dashboard     {...props} />;
-      case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes} />;
-      case "patrimonio":    return <Patrimonio    {...props} />;
-      case "investimentos": return <Investimentos {...props} setAtivos={setAtivos} />;
-      case "relatorios":    return <Relatorios    {...props} />;
-      case "config":        return <Configuracoes {...props} setCats={setCats} setContas={setContas} />;
-      default:              return <Dashboard     {...props} />;
+      case "dashboard":     return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas} setCartaoPagamentos={setCartaoPagamentos}/>;
+      case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes} setCartaoCompras={setCartaoCompras}/>;
+      case "patrimonio":    return <Patrimonio    {...props}/>;
+      case "investimentos": return <Investimentos {...props} setAtivos={setAtivos}/>;
+      case "relatorios":    return <Relatorios    {...props}/>;
+      case "config":        return <Configuracoes {...props} setCats={setCats} setContas={setContas}/>;
+      default:              return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas} setCartaoPagamentos={setCartaoPagamentos}/>;
     }
   };
 
   const styles = `
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    input, select { color-scheme: dark; }
-    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
-    button { transition: all 0.15s; }
-    button:active { opacity: 0.7; }
-    input:focus, select:focus { border-color: ${C.accent} !important; outline: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    input,select { color-scheme:dark; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:${C.border}; border-radius:3px; }
+    button { transition:all 0.15s; }
+    button:active { opacity:0.7; }
+    input:focus,select:focus { border-color:${C.accent} !important; outline:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
   `;
 
   // ── DESKTOP ──
   if (isDesktop) return (
-    <div style={{ display:"flex", height:"100vh", background:C.bg, fontFamily:"'Outfit','DM Sans',sans-serif", color:C.text, overflow:"hidden" }}>
-      <div style={{ width:240, background:C.surface, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", flexShrink:0, height:"100vh" }}>
-        <div style={{ padding:"24px 20px 20px", borderBottom:`1px solid ${C.border}` }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:36, height:36, background:`linear-gradient(135deg, ${C.accent}, ${C.blue})`, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:900 }}>₿</div>
-            <div><div style={{ color:C.text, fontWeight:900, fontSize:16 }}>FinControl</div><div style={{ color:C.muted, fontSize:10 }}>Gestão Financeira</div></div>
+    <div style={{display:"flex",height:"100vh",background:C.bg,fontFamily:"'Outfit','DM Sans',sans-serif",color:C.text,overflow:"hidden"}}>
+      <div style={{width:240,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh"}}>
+        <div style={{padding:"24px 20px 20px",borderBottom:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:36,height:36,background:`linear-gradient(135deg, ${C.accent}, ${C.blue})`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900}}>₿</div>
+            <div><div style={{color:C.text,fontWeight:900,fontSize:16}}>FinControl</div><div style={{color:C.muted,fontSize:10}}>Gestão Financeira</div></div>
           </div>
         </div>
-        <nav style={{ flex:1, padding:"12px 10px", display:"flex", flexDirection:"column", gap:2, overflowY:"auto" }}>
-          {NAV.map(n => {
-            const active = screen === n.id;
-            return (
-              <button key={n.id} onClick={() => setScreen(n.id)} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, border:"none", cursor:"pointer", width:"100%", textAlign:"left", background: active?C.accentDim:"transparent", borderLeft:`3px solid ${active?C.accent:"transparent"}`, fontFamily:"inherit" }}>
-                <span style={{ fontSize:18, lineHeight:1, opacity: active?1:0.6 }}>{n.icon}</span>
-                <div>
-                  <div style={{ color: active?C.accent:C.text, fontWeight: active?700:500, fontSize:13 }}>{n.label}</div>
-                  <div style={{ color:C.muted, fontSize:10, marginTop:1 }}>{n.desc}</div>
-                </div>
-              </button>
-            );
+        <nav style={{flex:1,padding:"12px 10px",display:"flex",flexDirection:"column",gap:2,overflowY:"auto"}}>
+          {NAV.map(n=>{
+            const active=screen===n.id;
+            return <button key={n.id} onClick={()=>setScreen(n.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",width:"100%",textAlign:"left",background:active?C.accentDim:"transparent",borderLeft:`3px solid ${active?C.accent:"transparent"}`,fontFamily:"inherit"}}>
+              <span style={{fontSize:18,lineHeight:1,opacity:active?1:0.6}}>{n.icon}</span>
+              <div><div style={{color:active?C.accent:C.text,fontWeight:active?700:500,fontSize:13}}>{n.label}</div><div style={{color:C.muted,fontSize:10,marginTop:1}}>{n.desc}</div></div>
+            </button>;
           })}
         </nav>
-        <div style={{ padding:"16px 20px", borderTop:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{ width:34, height:34, borderRadius:"50%", background:`linear-gradient(135deg, ${C.purple}, ${C.blue})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:800, color:"#fff" }}>L</div>
-          <div style={{ flex:1 }}><div style={{ color:C.text, fontSize:13, fontWeight:700 }}>Luan</div><div style={{ color:C.muted, fontSize:10 }}>Conta pessoal</div></div>
-          {loading && <div style={{ width:14, height:14, border:`2px solid ${C.border}`, borderTopColor:C.accent, borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />}
+        <div style={{padding:"16px 20px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(135deg, ${C.purple}, ${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff"}}>L</div>
+          <div style={{flex:1}}><div style={{color:C.text,fontSize:13,fontWeight:700}}>Luan</div><div style={{color:C.muted,fontSize:10}}>Conta pessoal</div></div>
+          {loading&&<div style={{width:14,height:14,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>}
         </div>
       </div>
-      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-        <div style={{ height:62, background:C.surface, borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", padding:"0 28px", gap:14, flexShrink:0 }}>
-          <div>
-            <h1 style={{ margin:0, color:C.text, fontWeight:800, fontSize:18 }}>{cur?.label}</h1>
-            <div style={{ color:C.muted, fontSize:11 }}>{cur?.desc}</div>
-          </div>
-          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ background:C.accentDim, border:`1px solid ${C.accentGlow}`, borderRadius:8, padding:"5px 14px", color:C.accent, fontSize:12, fontWeight:700 }}>{mesAtual()}</div>
-          </div>
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{height:62,background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"0 28px",gap:14,flexShrink:0}}>
+          <div><h1 style={{margin:0,color:C.text,fontWeight:800,fontSize:18}}>{cur?.label}</h1><div style={{color:C.muted,fontSize:11}}>{cur?.desc}</div></div>
+          <div style={{marginLeft:"auto"}}><div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:8,padding:"5px 14px",color:C.accent,fontSize:12,fontWeight:700}}>{mesAtual()}</div></div>
         </div>
-        <div style={{ flex:1, overflowY:"auto", padding:"24px 28px" }}>{renderScreen()}</div>
+        <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>{renderScreen()}</div>
       </div>
       <style>{styles}</style>
     </div>
@@ -991,22 +1148,22 @@ export default function App() {
 
   // ── MOBILE ──
   return (
-    <div style={{ background:C.bg, minHeight:"100vh", fontFamily:"'Outfit','DM Sans',sans-serif", color:C.text, display:"flex", flexDirection:"column", maxWidth:640, margin:"0 auto" }}>
-      <div style={{ position:"sticky", top:0, zIndex:50, background:C.surface, borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", padding:"12px 18px", gap:10 }}>
-        <div style={{ width:30, height:30, background:`linear-gradient(135deg, ${C.accent}, ${C.blue})`, borderRadius:9, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:900 }}>₿</div>
-        <div><div style={{ color:C.text, fontWeight:800, fontSize:15 }}>FinControl</div><div style={{ color:C.muted, fontSize:10 }}>{cur?.label}</div></div>
-        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
-          {loading && <div style={{ width:16, height:16, border:`2px solid ${C.border}`, borderTopColor:C.accent, borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />}
-          <div style={{ background:C.accentDim, border:`1px solid ${C.accentGlow}`, borderRadius:7, padding:"4px 10px", color:C.accent, fontSize:11, fontWeight:700 }}>{mesAtual()}</div>
+    <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Outfit','DM Sans',sans-serif",color:C.text,display:"flex",flexDirection:"column",maxWidth:640,margin:"0 auto"}}>
+      <div style={{position:"sticky",top:0,zIndex:50,background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"12px 18px",gap:10}}>
+        <div style={{width:30,height:30,background:`linear-gradient(135deg, ${C.accent}, ${C.blue})`,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:900}}>₿</div>
+        <div><div style={{color:C.text,fontWeight:800,fontSize:15}}>FinControl</div><div style={{color:C.muted,fontSize:10}}>{cur?.label}</div></div>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+          {loading&&<div style={{width:16,height:16,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>}
+          <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:7,padding:"4px 10px",color:C.accent,fontSize:11,fontWeight:700}}>{mesAtual()}</div>
         </div>
       </div>
-      <div style={{ flex:1, padding:"16px 14px 90px" }}>{renderScreen()}</div>
-      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:640, background:C.surface, borderTop:`1px solid ${C.border}`, display:"flex", padding:"8px 2px 14px", zIndex:50 }}>
-        {NAV.map(n => (
-          <button key={n.id} onClick={() => setScreen(n.id)} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3, background:"none", border:"none", cursor:"pointer", padding:"4px 1px", color: screen===n.id?C.accent:C.muted, fontFamily:"inherit" }}>
-            <div style={{ width: screen===n.id?28:0, height:2, background:C.accent, borderRadius:1, marginBottom:2, transition:"width 0.2s" }} />
-            <span style={{ fontSize:15, lineHeight:1 }}>{n.icon}</span>
-            <span style={{ fontSize:9, fontWeight: screen===n.id?700:500 }}>{n.label}</span>
+      <div style={{flex:1,padding:"16px 14px 90px"}}>{renderScreen()}</div>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:640,background:C.surface,borderTop:`1px solid ${C.border}`,display:"flex",padding:"8px 2px 14px",zIndex:50}}>
+        {NAV.map(n=>(
+          <button key={n.id} onClick={()=>setScreen(n.id)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"4px 1px",color:screen===n.id?C.accent:C.muted,fontFamily:"inherit"}}>
+            <div style={{width:screen===n.id?28:0,height:2,background:C.accent,borderRadius:1,marginBottom:2,transition:"width 0.2s"}}/>
+            <span style={{fontSize:15,lineHeight:1}}>{n.icon}</span>
+            <span style={{fontSize:9,fontWeight:screen===n.id?700:500}}>{n.label}</span>
           </button>
         ))}
       </div>
