@@ -3,7 +3,7 @@ import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, Cart
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://eoajfzjugksyvlftccvb.supabase.co";
-const SUPA_KEY = "sb_publishable_YTGd2kRXpAwydD5c5aHLAw_bFI2_Z4X";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvYWpmemp1Z2tzeXZsZnRjY3ZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1OTk1MTYsImV4cCI6MjA4OTE3NTUxNn0.HuV88xk2ZYc48WWw8A7BPpX2vrvSHi6ZHfIng68k89A";
 const USER_ID  = "luan";
 
 const req = async (url, opts = {}) => {
@@ -163,9 +163,13 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
   const resultado = recMes - despMes;
   const poupanca  = recMes>0?((resultado/recMes)*100).toFixed(1):0;
 
-  const saldoContas = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
-  const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
-  const total = saldoContas + valorAtivos;
+  // Saldo real = saldo inicial + todos os lançamentos
+  const totalRecAll  = transacoes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
+  const totalDespAll = transacoes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const saldoBase    = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const saldoContas  = saldoBase + totalRecAll - totalDespAll;
+  const valorAtivos  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
+  const total        = saldoContas + valorAtivos;
 
   // Fatura de cada cartão = compras não pagas
   const cartoes = contas.filter(c=>c.tipo==="Cartão Crédito");
@@ -386,8 +390,8 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     if (!form.descricao||!form.valor||!form.data) return;
     setSaving(true);
     const nova = {...form, id:uid(), valor:Number(form.valor)};
-    const ok = await db.insert("transacoes", nova);
-    if (ok) setTransacoes(p=>[nova,...p]);
+    setTransacoes(p=>[nova,...p]);
+    await db.insert("transacoes", nova);
     setModal(false);
     setForm({tipo:"desp",descricao:"",valor:"",data:hoje(),cat:"",subcat:"",conta:"",status:"pago",recorrencia:"nenhuma"});
     setSaving(false);
@@ -399,8 +403,8 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     const cartao = cartoes.find(c=>c.nome===formCartao.cartao_id);
     if (!cartao) { setSaving(false); return; }
     const nova = {...formCartao, id:uid(), cartao_id:cartao.id, valor:Number(formCartao.valor)};
-    const ok = await db.insert("cartao_compras", nova);
-    if (ok) setCartaoCompras(p=>[nova,...p]);
+    setCartaoCompras(p=>[nova,...p]);
+    await db.insert("cartao_compras", nova);
     setModalCartao(false);
     setFormCartao({cartao_id:"",descricao:"",valor:"",data:hoje(),cat:"",subcat:""});
     setSaving(false);
@@ -544,7 +548,11 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
 
 // ─── PATRIMÔNIO ───────────────────────────────────────────────────────────────
 function Patrimonio({ transacoes, contas, ativos, loading }) {
-  const saldoContas = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  // Saldo real = saldo inicial cadastrado + receitas - despesas de todos os lançamentos
+  const totalRec  = transacoes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
+  const totalDesp = transacoes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const saldoBase = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const saldoContas = saldoBase + totalRec - totalDesp;
   const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const total = saldoContas + valorAtivos;
 
@@ -677,8 +685,8 @@ function Investimentos({ ativos, setAtivos, loading }) {
     if (!form.ticker||!form.qtd||!form.pmedio) return;
     setSaving(true);
     const novo = {...form, id:uid(), qtd:Number(form.qtd), pmedio:Number(form.pmedio), atual:Number(form.atual||form.pmedio)};
-    const ok = await db.insert("ativos", novo);
-    if (ok) setAtivos(p=>[...p,novo]);
+    setAtivos(p=>[...p,novo]);
+    await db.insert("ativos", novo);
     setModal(false);
     setForm({ticker:"",qtd:"",pmedio:"",atual:"",setor:""});
     setSaving(false);
@@ -885,34 +893,35 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
   const addCat = async tipo => {
     if (!nomeCat.trim()) return; setSaving(true);
     const nova = {id:uid(),nome:nomeCat.trim(),subs:[]};
-    const ok = await db.insert("cats",{...nova,tipo,subs:JSON.stringify([])});
-    if (ok) setCats(p=>({...p,[tipo]:[...p[tipo],nova]}));
+    setCats(p=>({...p,[tipo]:[...p[tipo],nova]}));
+    await db.insert("cats",{...nova,tipo,subs:JSON.stringify([])});
     setNomeCat(""); setModalCat(null); setSaving(false);
   };
-  const delCat = async (tipo,id) => { const ok=await db.remove("cats",id); if(ok) setCats(p=>({...p,[tipo]:p[tipo].filter(c=>c.id!==id)})); };
+  const delCat = async (tipo,id) => { setCats(p=>({...p,[tipo]:p[tipo].filter(c=>c.id!==id)})); await db.remove("cats",id); };
   const addSub = async (tipo,catId) => {
     if (!nomeSub.trim()) return; setSaving(true);
     const cat=cats[tipo].find(c=>c.id===catId);
     const newSubs=[...cat.subs,nomeSub.trim()];
-    const ok=await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
-    if (ok) setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
+    setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
+    await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
     setNomeSub(""); setModalSub(null); setSaving(false);
   };
   const delSub = async (tipo,catId,sub) => {
     const cat=cats[tipo].find(c=>c.id===catId);
     const newSubs=cat.subs.filter(s=>s!==sub);
-    const ok=await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
-    if (ok) setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
+    setCats(p=>({...p,[tipo]:p[tipo].map(c=>c.id===catId?{...c,subs:newSubs}:c)}));
+    await db.update("cats",catId,{subs:JSON.stringify(newSubs)});
   };
   const addConta = async () => {
     if (!formConta.nome) return; setSaving(true);
     const nova={...formConta,id:uid(),saldo:Number(formConta.saldo||0),cor:PALETTE[contas.length%PALETTE.length]};
-    const ok=await db.insert("contas",nova);
-    if (ok) setContas(p=>[...p,nova]);
+    // Adiciona no estado imediatamente (otimista) e persiste no Supabase
+    setContas(p=>[...p,nova]);
+    await db.insert("contas",nova);
     setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦",vencimento:"",limite:""});
     setModalConta(false); setSaving(false);
   };
-  const delConta = async id => { const ok=await db.remove("contas",id); if(ok) setContas(p=>p.filter(c=>c.id!==id)); };
+  const delConta = async id => { setContas(p=>p.filter(c=>c.id!==id)); await db.remove("contas",id); };
   const salvarSaldo = async () => {
     if (!editSaldo) return; setSaving(true);
     const ok=await db.update("contas",editSaldo.id,{saldo:Number(novoSaldo)});
