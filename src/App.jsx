@@ -914,7 +914,16 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
   };
   const addConta = async () => {
     if (!formConta.nome) return; setSaving(true);
-    const nova={...formConta,id:uid(),saldo:Number(formConta.saldo||0),cor:PALETTE[contas.length%PALETTE.length]};
+    const nova={
+      id: uid(),
+      nome: formConta.nome,
+      tipo: formConta.tipo,
+      icon: formConta.icon,
+      saldo: Number(formConta.saldo||0),
+      cor: PALETTE[contas.length%PALETTE.length],
+      ...(formConta.vencimento ? { vencimento: Number(formConta.vencimento) } : {}),
+      ...(formConta.limite     ? { limite: Number(formConta.limite) }         : {}),
+    };
     // Adiciona no estado imediatamente (otimista) e persiste no Supabase
     setContas(p=>[...p,nova]);
     await db.insert("contas",nova);
