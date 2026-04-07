@@ -307,15 +307,20 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         <Card>
           <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Saldo nas Contas</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
-            {contasBancarias.map(c=>(
-              <div key={c.id} style={{background:C.surface,borderRadius:10,padding:"12px 14px",border:`1px solid ${(c.cor||C.accent)}33`}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                  <span style={{fontSize:18}}>{c.icon}</span>
-                  <span style={{color:C.muted,fontSize:12}}>{c.nome}</span>
+            {contasBancarias.map(c=>{
+              const rec  = transacoes.filter(t=>t.tipo==="rec" &&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
+              const desp = transacoes.filter(t=>t.tipo==="desp"&&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
+              const saldoReal = Number(c.saldo) + rec - desp;
+              return (
+                <div key={c.id} style={{background:C.surface,borderRadius:10,padding:"12px 14px",border:`1px solid ${(c.cor||C.accent)}33`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <span style={{fontSize:18}}>{c.icon}</span>
+                    <span style={{color:C.muted,fontSize:12}}>{c.nome}</span>
+                  </div>
+                  <div style={{color:c.cor||C.accent,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:16}}>{fmt(saldoReal)}</div>
                 </div>
-                <div style={{color:c.cor||C.accent,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:16}}>{fmt(c.saldo)}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}
@@ -638,14 +643,17 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
           <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Saldo por Conta</div>
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>{
-              const pct = saldoContas>0?(Number(c.saldo)/saldoContas)*100:0;
+              const rec  = transacoes.filter(t=>t.tipo==="rec" &&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
+              const desp = transacoes.filter(t=>t.tipo==="desp"&&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
+              const saldoReal = Number(c.saldo) + rec - desp;
+              const pct = saldoContas>0?(saldoReal/saldoContas)*100:0;
               return (
                 <div key={c.id}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                     <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>{c.icon}</span><span style={{color:C.text,fontSize:13,fontWeight:600}}>{c.nome}</span><Badge color={c.cor||C.accent}>{c.tipo}</Badge></div>
-                    <div style={{display:"flex",gap:12}}><span style={{color:C.muted,fontSize:12}}>{pct.toFixed(1)}%</span><span style={{color:c.cor||C.accent,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:13}}>{fmt(c.saldo)}</span></div>
+                    <div style={{display:"flex",gap:12}}><span style={{color:C.muted,fontSize:12}}>{pct.toFixed(1)}%</span><span style={{color:c.cor||C.accent,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:13}}>{fmt(saldoReal)}</span></div>
                   </div>
-                  <div style={{background:C.border,borderRadius:4,height:5}}><div style={{background:c.cor||C.accent,height:"100%",width:`${pct}%`,borderRadius:4}}/></div>
+                  <div style={{background:C.border,borderRadius:4,height:5}}><div style={{background:c.cor||C.accent,height:"100%",width:`${Math.max(0,pct)}%`,borderRadius:4}}/></div>
                 </div>
               );
             })}
