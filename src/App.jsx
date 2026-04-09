@@ -161,7 +161,6 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
   const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
   const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
   const resultado = recMes - despMes;
-  const poupanca  = recMes>0?((resultado/recMes)*100).toFixed(1):0;
 
   // Saldo real = saldo inicial + todos os lançamentos
   const totalRecAll  = transacoes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
@@ -237,11 +236,11 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
       </Card>
 
       {/* Stats do mês */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
         <StatCard label="Receitas"  value={fmt(recMes)}   color={C.accent} sub="mês atual" />
         <StatCard label="Despesas"  value={fmt(despMes)}  color={C.red}    sub="mês atual" />
         <StatCard label="Resultado" value={fmt(resultado)} color={resultado>=0?C.accent:C.red} sub="saldo do mês" />
-        <StatCard label="Poupança"  value={`${poupanca}%`} color={C.yellow} sub="da receita" />
+
       </div>
 
       {/* Faturas dos cartões */}
@@ -268,7 +267,7 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
       )}
 
       {/* Gráficos */}
-      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
+      <div className="grid-2col" style={{display:"grid",gap:16}}>
         {byMonth.length>=2&&(
           <Card>
             <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Receitas vs Despesas</div>
@@ -326,7 +325,7 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
       )}
 
       {/* Últimas e próximas */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+      <div className="grid-2col" style={{display:"grid",gap:16}}>
         <Card>
           <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Últimas Transações</div>
           {ultimas.length===0?<Empty icon="📋" msg="Nenhuma transação" sub="Adicione em Transações"/>:
@@ -342,7 +341,7 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         </Card>
         <Card>
           <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Próximas Contas</div>
-          {proximas.length===0?<Empty icon="✅" msg="Sem pendências"/>:
+          {proximas.length===0?<Empty icon="📋" msg="Sem pendências" sub="Lançamentos com status 'pendente' aparecem aqui"/>:
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {proximas.map(t=>(
                 <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.surface,borderRadius:10}}>
@@ -392,13 +391,25 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
   const cartoes         = contas.filter(c=>c.tipo==="Cartão Crédito");
 
   const salvar = async () => {
-    if (!form.descricao||!form.valor||!form.data) return;
+    if (!form.valor||!form.data) return;
+    if (form.tipo==="transf" && (!form.conta||!form.contaDestino)) return;
+    if (form.tipo!=="transf" && !form.descricao) return;
     setSaving(true);
-    const nova = {...form, id:uid(), valor:Number(form.valor)};
-    setTransacoes(p=>[nova,...p]);
-    await db.insert("transacoes", nova);
+    if (form.tipo==="transf") {
+      // Lança saída na conta de origem e entrada na conta de destino
+      const desc = form.descricao||`Transferência ${form.conta} → ${form.contaDestino}`;
+      const saida   = {id:uid(),tipo:"desp",descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.conta,status:"pago",recorrencia:"nenhuma"};
+      const entrada = {id:uid(),tipo:"rec", descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.contaDestino,status:"pago",recorrencia:"nenhuma"};
+      setTransacoes(p=>[entrada,saida,...p]);
+      await db.insert("transacoes", saida);
+      await db.insert("transacoes", entrada);
+    } else {
+      const nova = {...form, id:uid(), valor:Number(form.valor)};
+      setTransacoes(p=>[nova,...p]);
+      await db.insert("transacoes", nova);
+    }
     setModal(false);
-    setForm({tipo:"desp",descricao:"",valor:"",data:hoje(),cat:"",subcat:"",conta:"",status:"pago",recorrencia:"nenhuma"});
+    setForm({tipo:"desp",descricao:"",valor:"",data:hoje(),cat:"",subcat:"",conta:"",contaDestino:"",status:"pago",recorrencia:"nenhuma"});
     setSaving(false);
   };
 
@@ -451,8 +462,8 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
       {tab==="lancamentos"&&(
         lista.length===0
           ?<Card><Empty icon="💳" msg="Nenhuma transação" sub="Toque em '+ Novo'"/></Card>
-          :<Card style={{padding:0,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
+          :<Card style={{padding:0,overflowX:"auto"}}>
+            <table style={{width:"100%",minWidth:600,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Descrição","Categoria","Conta","Data","Valor","Status",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
                 {lista.map((t,i)=>(
@@ -475,8 +486,8 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
       {tab==="cartao"&&(
         cartaoCompras.length===0
           ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
-          :<Card style={{padding:0,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
+          :<Card style={{padding:0,overflowX:"auto"}}>
+            <table style={{width:"100%",minWidth:500,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Cartão","Descrição","Categoria","Data","Valor",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
               <tbody>
                 {[...cartaoCompras].sort((a,b)=>new Date(b.data)-new Date(a.data)).map((c,i)=>{
@@ -506,19 +517,35 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
                 <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
               ))}
             </div>
-            <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado" />
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
-              <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
-            </div>
-            <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]} />
-            {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
-            {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
-              <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
-            </div>
-            <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar Transação"}</Btn>
+            {form.tipo==="transf" ? (
+              <>
+                <InputField label="Descrição (opcional)" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Reserva de emergência" />
+                <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
+                <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
+                <InputField label="Conta de Origem (débito)" value={form.conta} onChange={f("conta")} options={contaOpts.length?contaOpts:["(cadastre contas em ⚙️)"]} />
+                <InputField label="Conta de Destino (crédito)" value={form.contaDestino||""} onChange={f("contaDestino")} options={contaOpts.length?contaOpts:["(cadastre contas em ⚙️)"]} />
+                <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:10,padding:"10px 14px",color:C.muted,fontSize:12}}>
+                  💡 A transferência será debitada da conta de origem e creditada na conta de destino automaticamente.
+                </div>
+                <Btn onClick={salvar} full color={C.blue}>{saving?"Salvando...":"Registrar Transferência"}</Btn>
+              </>
+            ) : (
+              <>
+                <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado" />
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
+                  <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
+                </div>
+                <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]} />
+                {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
+                {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
+                  <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
+                </div>
+                <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar Transação"}</Btn>
+              </>
+            )}
           </div>
         </Modal>
       )}
@@ -586,7 +613,7 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
         </div>
       </Card>
 
-      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
+      <div className="grid-2col" style={{display:"grid",gap:16}}>
         {evolucao.length>=2
           ?<Card>
             <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Evolução do Resultado Acumulado</div>
@@ -739,7 +766,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
       {carteira.length===0
         ?<Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações e ETFs para acompanhar"/></Card>
         :<div style={{display:"grid",gridTemplateColumns:carteira.length>1?"2fr 1fr":"1fr",gap:16}}>
-          <Card style={{padding:0,overflow:"hidden"}}>
+          <Card style={{padding:0,overflow:"hidden",overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Ticker","Setor","Qtd","P.Médio","P.Atual","Investido","Atual","L/P","%",""].map((h,i)=><th key={i} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
@@ -845,7 +872,7 @@ function Relatorios({ transacoes, ativos, loading }) {
   );
   if (loading) return <Spinner />;
   return (
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+    <div className="grid-2col" style={{display:"grid",gap:16}}>
       <Card>
         <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📅 Mês Atual</div>
         <Row label="Receitas"         val={fmt(recMes)}  cor={C.accent}/>
@@ -1125,6 +1152,18 @@ export default function App() {
   const styles = `
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
     * { box-sizing:border-box; margin:0; padding:0; }
+    .grid-2col { grid-template-columns: 1fr 1fr; }
+    .grid-3col { grid-template-columns: repeat(3,1fr); }
+    @media (max-width: 600px) {
+      .grid-2col { grid-template-columns: 1fr !important; }
+      .grid-3col { grid-template-columns: 1fr 1fr !important; }
+    }
+    .grid-2col { grid-template-columns: 1fr 1fr; }
+    .grid-3col { grid-template-columns: repeat(3,1fr); }
+    @media (max-width: 600px) {
+      .grid-2col { grid-template-columns: 1fr !important; }
+      .grid-3col { grid-template-columns: 1fr 1fr !important; }
+    }
     input,select { color-scheme:dark; }
     input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
     ::-webkit-scrollbar { width:6px; height:6px; }
