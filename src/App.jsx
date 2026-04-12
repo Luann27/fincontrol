@@ -91,6 +91,9 @@ const fmtPct   = v => `${Number(v)>0?"+":""}${Number(v).toFixed(2)}%`;
 const uid      = () => Math.random().toString(36).slice(2,10);
 const hoje     = () => new Date().toISOString().slice(0,10);
 const mesAtual = () => { const d=new Date(); return `${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`; };
+// Parse seguro de data sem fuso horário (evita bug dia 1° virar mês anterior)
+const parseData = (s) => { if(!s) return new Date(); const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+const getMesAno = (s) => { const d=parseData(s); return {m:d.getMonth()+1, a:d.getFullYear()}; };
 
 function useIsDesktop() {
   const [ok, setOk] = useState(window.innerWidth >= 768);
@@ -151,13 +154,26 @@ const SectionTitle = ({children}) => <div style={{color:C.muted,fontSize:10,font
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos, setTransacoes, setContas, setCartaoPagamentos, loading }) {
   const now  = new Date();
-  const mesN = now.getMonth()+1, anoN = now.getFullYear();
-  const [modalFatura, setModalFatura] = useState(null); // cartao object
+  const [mesSel, setMesSel] = useState(now.getMonth()+1);
+  const [anoSel, setAnoSel] = useState(now.getFullYear());
+  const [modalFatura, setModalFatura] = useState(null);
   const [formPag, setFormPag] = useState({ conta_id:"", valor:"", data:hoje() });
   const [saving, setSaving] = useState(false);
   const fp = k => v => setFormPag(p=>({...p,[k]:v}));
 
-  const doMes   = transacoes.filter(t=>{ const d=new Date(t.data); return d.getMonth()+1===mesN&&d.getFullYear()===anoN; });
+  const mesN = mesSel, anoN = anoSel;
+  const mesNome = new Date(anoSel, mesSel-1, 1).toLocaleString("pt-BR",{month:"long",year:"numeric"});
+
+  const navMes = (dir) => {
+    setMesSel(p => {
+      let m = p + dir, a = anoSel;
+      if (m > 12) { m = 1; setAnoSel(a+1); }
+      else if (m < 1) { m = 12; setAnoSel(a-1); }
+      return m;
+    });
+  };
+
+  const doMes   = transacoes.filter(t=>{ const {m,a}=getMesAno(t.data); return m===mesN&&a===anoN; });
   const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
   const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
   const resultado = recMes - despMes;
@@ -192,8 +208,14 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
     return Object.entries(map).map(([nome,valor],i)=>({nome,valor,cor:PALETTE[i%PALETTE.length]})).sort((a,b)=>b.valor-a.valor).slice(0,7);
   },[doMes]);
 
-  const ultimas  = [...transacoes].sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,6);
-  const proximas = transacoes.filter(t=>t.tipo==="desp"&&t.status==="pendente").sort((a,b)=>new Date(a.data)-new Date(b.data)).slice(0,4);
+  const recCat = useMemo(()=>{
+    const map={};
+    doMes.filter(t=>t.tipo==="rec").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
+    return Object.entries(map).map(([nome,valor],i)=>({nome,valor,cor:PALETTE[i%PALETTE.length]})).sort((a,b)=>b.valor-a.valor).slice(0,7);
+  },[doMes]);
+
+  const ultimas  = [...transacoes].sort((a,b)=>parseData(b.data)-parseData(a.data)).slice(0,6);
+  const proximas = transacoes.filter(t=>t.tipo==="desp"&&t.status==="pendente").sort((a,b)=>parseData(a.data)-parseData(b.data)).slice(0,4);
 
   const pagarFatura = async () => {
     if (!formPag.conta_id || !formPag.valor || !modalFatura) return;
@@ -235,6 +257,16 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         </div>
       </Card>
 
+      {/* Seletor de mês */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.surface,borderRadius:12,padding:"10px 16px"}}>
+        <button onClick={()=>navMes(-1)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",color:C.text,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{color:C.text,fontWeight:700,fontSize:14,textTransform:"capitalize"}}>{mesNome}</div>
+          <div style={{color:C.muted,fontSize:11}}>{mesSel===now.getMonth()+1&&anoSel===now.getFullYear()?"Mês atual":"Histórico"}</div>
+        </div>
+        <button onClick={()=>navMes(+1)} disabled={mesSel===now.getMonth()+1&&anoSel===now.getFullYear()} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",color:mesSel===now.getMonth()+1&&anoSel===now.getFullYear()?C.muted:C.text,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+      </div>
+
       {/* Stats do mês */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
         <StatCard label="Receitas"  value={fmt(recMes)}   color={C.accent} sub="mês atual" />
@@ -266,31 +298,49 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         </Card>
       )}
 
-      {/* Gráficos */}
+      {/* Gráfico histórico */}
+      {byMonth.length>=2&&(
+        <Card>
+          <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Histórico — Receitas vs Despesas</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={byMonth}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis dataKey="mes" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} />
+              <YAxis tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+              <Tooltip content={<MiniTooltip />} />
+              <Bar dataKey="rec"  fill={C.accent} radius={[4,4,0,0]} name="Receitas" />
+              <Bar dataKey="desp" fill={C.red}    radius={[4,4,0,0]} name="Despesas" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* Gráficos de categoria */}
       <div className="grid-2col" style={{display:"grid",gap:16}}>
-        {byMonth.length>=2&&(
-          <Card>
-            <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Receitas vs Despesas</div>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={byMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis dataKey="mes" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} />
-                <YAxis tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
-                <Tooltip content={<MiniTooltip />} />
-                <Bar dataKey="rec"  fill={C.accent} radius={[4,4,0,0]} name="Receitas" />
-                <Bar dataKey="desp" fill={C.red}    radius={[4,4,0,0]} name="Despesas" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        )}
         {gastosCat.length>0&&(
           <Card>
-            <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Por Categoria</div>
-            <ResponsiveContainer width="100%" height={130}>
-              <PieChart><Pie data={gastosCat} dataKey="valor" cx="50%" cy="50%" innerRadius={30} outerRadius={55}>{gastosCat.map((c,i)=><Cell key={i} fill={c.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
+            <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>📤 Despesas por Categoria</div>
+            <ResponsiveContainer width="100%" height={120}>
+              <PieChart><Pie data={gastosCat} dataKey="valor" cx="50%" cy="50%" innerRadius={28} outerRadius={52}>{gastosCat.map((c,i)=><Cell key={i} fill={c.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
             </ResponsiveContainer>
             <div style={{display:"flex",flexDirection:"column",gap:5,marginTop:8}}>
               {gastosCat.slice(0,5).map((c,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:c.cor,flexShrink:0}}/><span style={{color:C.muted,fontSize:11}}>{c.nome}</span></div>
+                  <span style={{color:C.text,fontSize:11,fontWeight:700}}>{fmt(c.valor)}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+        {recCat.length>0&&(
+          <Card>
+            <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>📥 Receitas por Categoria</div>
+            <ResponsiveContainer width="100%" height={120}>
+              <PieChart><Pie data={recCat} dataKey="valor" cx="50%" cy="50%" innerRadius={28} outerRadius={52}>{recCat.map((c,i)=><Cell key={i} fill={c.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
+            </ResponsiveContainer>
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginTop:8}}>
+              {recCat.slice(0,5).map((c,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:c.cor,flexShrink:0}}/><span style={{color:C.muted,fontSize:11}}>{c.nome}</span></div>
                   <span style={{color:C.text,fontSize:11,fontWeight:700}}>{fmt(c.valor)}</span>
@@ -429,7 +479,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
   const excluir = async id => { await db.remove("transacoes",id); setTransacoes(p=>p.filter(t=>t.id!==id)); };
   const excluirCompra = async id => { await db.remove("cartao_compras",id); setCartaoCompras(p=>p.filter(c=>c.id!==id)); };
 
-  const lista = [...(filtro==="todos"?transacoes:transacoes.filter(t=>t.tipo===filtro))].sort((a,b)=>new Date(b.data)-new Date(a.data));
+  const lista = [...(filtro==="todos"?transacoes:transacoes.filter(t=>t.tipo===filtro))].sort((a,b)=>parseData(b.data)-parseData(a.data));
   const catOpts  = cats[form.tipo==="rec"?"rec":"desp"].map(c=>c.nome);
   const catCartaoOpts = cats.desp.map(c=>c.nome);
   const contaOpts = contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome);
@@ -490,7 +540,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
             <table style={{width:"100%",minWidth:500,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Cartão","Descrição","Categoria","Data","Valor",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
               <tbody>
-                {[...cartaoCompras].sort((a,b)=>new Date(b.data)-new Date(a.data)).map((c,i)=>{
+                {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map((c,i)=>{
                   const cartao = contas.find(ct=>ct.id===c.cartao_id);
                   return (
                     <tr key={c.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
@@ -755,7 +805,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+      <div className="grid-3col" style={{display:"grid",gap:12}}>
         <StatCard label="Total Investido" value={fmt(totalInvest)} color={C.blue}/>
         <StatCard label="Valor Atual"     value={fmt(totalAtual)}/>
         <StatCard label="Resultado"       value={fmt(lucroTotal)} color={lucroTotal>=0?C.accent:C.red} sub={totalInvest>0?fmtPct((lucroTotal/totalInvest)*100):""}/>
@@ -766,8 +816,8 @@ function Investimentos({ ativos, setAtivos, loading }) {
       {carteira.length===0
         ?<Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações e ETFs para acompanhar"/></Card>
         :<div style={{display:"grid",gridTemplateColumns:carteira.length>1?"2fr 1fr":"1fr",gap:16}}>
-          <Card style={{padding:0,overflow:"hidden",overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <Card style={{padding:0,overflowX:"auto"}}>
+            <table style={{width:"100%",minWidth:700,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Ticker","Setor","Qtd","P.Médio","P.Atual","Investido","Atual","L/P","%",""].map((h,i)=><th key={i} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
               <tbody>
                 {carteira.map((a,i)=>(
@@ -854,8 +904,8 @@ function Investimentos({ ativos, setAtivos, loading }) {
 // ─── RELATÓRIOS ───────────────────────────────────────────────────────────────
 function Relatorios({ transacoes, ativos, loading }) {
   const now=new Date(); const mesN=now.getMonth()+1,anoN=now.getFullYear();
-  const doMes = transacoes.filter(t=>{ const d=new Date(t.data); return d.getMonth()+1===mesN&&d.getFullYear()===anoN; });
-  const doAno = transacoes.filter(t=>new Date(t.data).getFullYear()===anoN);
+  const doMes = transacoes.filter(t=>{ const {m,a}=getMesAno(t.data); return m===mesN&&a===anoN; });
+  const doAno = transacoes.filter(t=>getMesAno(t.data).a===anoN);
   const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
   const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
   const recAno  = doAno.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
@@ -865,9 +915,9 @@ function Relatorios({ transacoes, ativos, loading }) {
   const totalAtual  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const totalInvest = ativos.reduce((s,a)=>s+Number(a.pmedio)*Number(a.qtd),0);
   const Row = ({label,val,cor=C.text}) => (
-    <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-      <span style={{color:C.muted,fontSize:13}}>{label}</span>
-      <span style={{color:cor,fontWeight:700,fontFamily:"'DM Mono',monospace"}}>{val}</span>
+    <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap",gap:4}}>
+      <span style={{color:C.muted,fontSize:12}}>{label}</span>
+      <span style={{color:cor,fontWeight:700,fontFamily:"'DM Mono',monospace",fontSize:12}}>{val}</span>
     </div>
   );
   if (loading) return <Spinner />;
@@ -1154,15 +1204,17 @@ export default function App() {
     * { box-sizing:border-box; margin:0; padding:0; }
     .grid-2col { grid-template-columns: 1fr 1fr; }
     .grid-3col { grid-template-columns: repeat(3,1fr); }
-    @media (max-width: 600px) {
+    @media (max-width: 640px) {
       .grid-2col { grid-template-columns: 1fr !important; }
       .grid-3col { grid-template-columns: 1fr 1fr !important; }
+      .hide-mobile { display: none !important; }
     }
     .grid-2col { grid-template-columns: 1fr 1fr; }
     .grid-3col { grid-template-columns: repeat(3,1fr); }
-    @media (max-width: 600px) {
+    @media (max-width: 640px) {
       .grid-2col { grid-template-columns: 1fr !important; }
       .grid-3col { grid-template-columns: 1fr 1fr !important; }
+      .hide-mobile { display: none !important; }
     }
     input,select { color-scheme:dark; }
     input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
