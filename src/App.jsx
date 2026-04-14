@@ -198,8 +198,16 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
 
   const byMonth = useMemo(()=>{
     const meses={};
-    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getFullYear()).slice(2)}`; if(!meses[key])meses[key]={rec:0,desp:0}; if(t.tipo==="rec")meses[key].rec+=Number(t.valor); if(t.tipo==="desp")meses[key].desp+=Number(t.valor); });
-    return Object.entries(meses).slice(-6).map(([mes,v])=>({mes,...v}));
+    transacoes.forEach(t=>{
+      const {m,a}=getMesAno(t.data);
+      const key=`${String(a)}-${String(m).padStart(2,"0")}`;
+      if(!meses[key])meses[key]={rec:0,desp:0};
+      if(t.tipo==="rec")meses[key].rec+=Number(t.valor);
+      if(t.tipo==="desp")meses[key].desp+=Number(t.valor);
+    });
+    return Object.entries(meses).sort().slice(-6).map(([key,v])=>({
+      mes:`${key.slice(5)}/${key.slice(2,4)}`,...v
+    }));
   },[transacoes]);
 
   const gastosCat = useMemo(()=>{
@@ -491,71 +499,85 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {/* Tabs */}
-      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-        <div style={{display:"flex",background:C.surface,borderRadius:10,padding:3,gap:2}}>
-          {[["lancamentos","Lançamentos"],["cartao","Compras no Cartão"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {/* Linha 1: abas principais */}
+        <div style={{display:"flex",gap:6}}>
+          {[["lancamentos","💰 Lançamentos"],["cartao","💳 Cartão"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px 8px",borderRadius:9,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
           ))}
         </div>
+        {/* Linha 2: filtros + botão */}
         {tab==="lancamentos"&&(
-          <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {["todos","rec","desp"].map(f2=>(
               <button key={f2} onClick={()=>setFiltro(f2)} style={{padding:"6px 12px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:filtro===f2?C.accent:C.surface,color:filtro===f2?C.bg:C.muted,fontFamily:"inherit"}}>{f2==="todos"?"Todos":f2==="rec"?"Receitas":"Despesas"}</button>
             ))}
-            <Btn onClick={()=>setModal(true)} small>+ Novo</Btn>
+            <Btn onClick={()=>setModal(true)} small style={{marginLeft:"auto"}}>+ Novo</Btn>
           </div>
         )}
-        {tab==="cartao"&&<Btn onClick={()=>setModalCartao(true)} small style={{marginLeft:"auto"}}>+ Compra no Cartão</Btn>}
+        {tab==="cartao"&&(
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <Btn onClick={()=>setModalCartao(true)} small>+ Compra no Cartão</Btn>
+          </div>
+        )}
       </div>
 
       {/* Tab lançamentos */}
       {tab==="lancamentos"&&(
         lista.length===0
           ?<Card><Empty icon="💳" msg="Nenhuma transação" sub="Toque em '+ Novo'"/></Card>
-          :<Card style={{padding:0,overflowX:"auto"}}>
-            <table style={{width:"100%",minWidth:600,borderCollapse:"collapse"}}>
-              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Descrição","Categoria","Conta","Data","Valor","Status",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
-              <tbody>
-                {lista.map((t,i)=>(
-                  <tr key={t.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
-                    <td style={{padding:"11px 16px",color:C.text,fontSize:13,fontWeight:600}}>{t.descricao}</td>
-                    <td style={{padding:"11px 16px"}}><div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{t.cat&&<Badge color={t.tipo==="rec"?C.accent:C.blue}>{t.cat}</Badge>}{t.subcat&&<Badge color={C.purple}>{t.subcat}</Badge>}</div></td>
-                    <td style={{padding:"11px 16px",color:C.muted,fontSize:12}}>{t.conta||"—"}</td>
-                    <td style={{padding:"11px 16px",color:C.muted,fontSize:12,whiteSpace:"nowrap"}}>{t.data}</td>
-                    <td style={{padding:"11px 16px",color:t.tipo==="rec"?C.accent:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:13,whiteSpace:"nowrap"}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</td>
-                    <td style={{padding:"11px 16px"}}><Badge color={t.status==="pago"?C.accent:C.yellow}>{t.status}</Badge></td>
-                    <td style={{padding:"11px 16px"}}><button onClick={()=>excluir(t.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {lista.map(t=>(
+              <Card key={t.id} style={{padding:"12px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.descricao}</div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                      {t.cat&&<Badge color={t.tipo==="rec"?C.accent:C.blue}>{t.cat}</Badge>}
+                      {t.subcat&&<Badge color={C.purple}>{t.subcat}</Badge>}
+                      {t.conta&&<Badge color={C.muted}>{t.conta}</Badge>}
+                      <Badge color={t.status==="pago"?C.accent:C.yellow}>{t.status}</Badge>
+                      <span style={{color:C.muted,fontSize:10}}>{t.data}</span>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                    <span style={{color:t.tipo==="rec"?C.accent:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:14}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</span>
+                    <button onClick={()=>excluir(t.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
       )}
 
       {/* Tab compras no cartão */}
       {tab==="cartao"&&(
         cartaoCompras.length===0
           ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
-          :<Card style={{padding:0,overflowX:"auto"}}>
-            <table style={{width:"100%",minWidth:500,borderCollapse:"collapse"}}>
-              <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Cartão","Descrição","Categoria","Data","Valor",""].map((h,i)=><th key={i} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-              <tbody>
-                {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map((c,i)=>{
-                  const cartao = contas.find(ct=>ct.id===c.cartao_id);
-                  return (
-                    <tr key={c.id} style={{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.surface+"44"}}>
-                      <td style={{padding:"11px 16px"}}><Badge color={C.purple}>{cartao?.nome||"—"}</Badge></td>
-                      <td style={{padding:"11px 16px",color:C.text,fontSize:13,fontWeight:600}}>{c.descricao}</td>
-                      <td style={{padding:"11px 16px"}}><div style={{display:"flex",gap:5}}>{c.cat&&<Badge color={C.blue}>{c.cat}</Badge>}{c.subcat&&<Badge color={C.purple}>{c.subcat}</Badge>}</div></td>
-                      <td style={{padding:"11px 16px",color:C.muted,fontSize:12}}>{c.data}</td>
-                      <td style={{padding:"11px 16px",color:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:13}}>−{fmt(c.valor)}</td>
-                      <td style={{padding:"11px 16px"}}><button onClick={()=>excluirCompra(c.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map(c=>{
+              const cartao=contas.find(ct=>ct.id===c.cartao_id);
+              return (
+                <Card key={c.id} style={{padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:5}}>{c.descricao}</div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                        {cartao&&<Badge color={C.purple}>{cartao.nome}</Badge>}
+                        {c.cat&&<Badge color={C.blue}>{c.cat}</Badge>}
+                        {c.subcat&&<Badge color={C.purple}>{c.subcat}</Badge>}
+                        <span style={{color:C.muted,fontSize:10}}>{c.data}</span>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                      <span style={{color:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:14}}>−{fmt(c.valor)}</span>
+                      <button onClick={()=>excluirCompra(c.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
       )}
 
       {/* Modal novo lançamento */}
@@ -815,7 +837,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
 
       {carteira.length===0
         ?<Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações e ETFs para acompanhar"/></Card>
-        :<div style={{display:"grid",gridTemplateColumns:carteira.length>1?"2fr 1fr":"1fr",gap:16}}>
+        :<div style={{display:"flex",flexDirection:"column",gap:16}}>
           <Card style={{padding:0,overflowX:"auto"}}>
             <table style={{width:"100%",minWidth:700,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>{["Ticker","Setor","Qtd","P.Médio","P.Atual","Investido","Atual","L/P","%",""].map((h,i)=><th key={i} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
@@ -844,17 +866,24 @@ function Investimentos({ ativos, setAtivos, loading }) {
           </Card>
           {carteira.length>1&&(
             <Card>
-              <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Alocação</div>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart><Pie data={carteira} dataKey="vatual" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3}>{carteira.map((a,i)=><Cell key={i} fill={a.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
-              </ResponsiveContainer>
-              <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>
-                {carteira.map((a,i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:a.cor}}/><span style={{color:C.muted,fontSize:12}}>{a.ticker}</span></div>
-                    <span style={{color:C.text,fontSize:12,fontWeight:700}}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</span>
-                  </div>
-                ))}
+              <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>Alocação da Carteira</div>
+              <div style={{display:"flex",gap:16,alignItems:"center"}}>
+                <div style={{flexShrink:0,width:120,height:120}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart><Pie data={carteira} dataKey="vatual" cx="50%" cy="50%" innerRadius={30} outerRadius={55} paddingAngle={3}>{carteira.map((a,i)=><Cell key={i} fill={a.cor}/>)}</Pie><Tooltip formatter={v=>fmt(v)} contentStyle={{background:C.card,border:`1px solid ${C.border}`,fontSize:11}}/></PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
+                  {carteira.map((a,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:a.cor,flexShrink:0}}/><span style={{color:C.muted,fontSize:12}}>{a.ticker}</span></div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{color:C.text,fontSize:12,fontWeight:700}}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</div>
+                        <div style={{color:C.muted,fontSize:10}}>{fmt(a.vatual)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </Card>
           )}
