@@ -174,13 +174,13 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
   };
 
   const doMes   = transacoes.filter(t=>{ const {m,a}=getMesAno(t.data); return m===mesN&&a===anoN; });
-  const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
-  const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const recMes  = doMes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+  const despMes = doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const resultado = recMes - despMes;
 
   // Saldo real = saldo inicial + todos os lançamentos
-  const totalRecAll  = transacoes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
-  const totalDespAll = transacoes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const totalRecAll  = transacoes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+  const totalDespAll = transacoes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const saldoBase    = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
   const saldoContas  = saldoBase + totalRecAll - totalDespAll;
   const valorAtivos  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
@@ -202,8 +202,8 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
       const {m,a}=getMesAno(t.data);
       const key=`${String(a)}-${String(m).padStart(2,"0")}`;
       if(!meses[key])meses[key]={rec:0,desp:0};
-      if(t.tipo==="rec")meses[key].rec+=Number(t.valor);
-      if(t.tipo==="desp")meses[key].desp+=Number(t.valor);
+      if(t.tipo==="rec"&&t.cat!=="Transferência")meses[key].rec+=Number(t.valor);
+      if(t.tipo==="desp"&&t.cat!=="Transferência")meses[key].desp+=Number(t.valor);
     });
     return Object.entries(meses).sort().slice(-6).map(([key,v])=>({
       mes:`${key.slice(5)}/${key.slice(2,4)}`,...v
@@ -212,17 +212,17 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
 
   const gastosCat = useMemo(()=>{
     const map={};
-    doMes.filter(t=>t.tipo==="desp").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
+    doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
     return Object.entries(map).map(([nome,valor],i)=>({nome,valor,cor:PALETTE[i%PALETTE.length]})).sort((a,b)=>b.valor-a.valor).slice(0,7);
   },[doMes]);
 
   const recCat = useMemo(()=>{
     const map={};
-    doMes.filter(t=>t.tipo==="rec").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
+    doMes.filter(t=>t.tipo==="rec"&&t.cat!=="Transferência").forEach(t=>{map[t.cat||"Outros"]=(map[t.cat||"Outros"]||0)+Number(t.valor);});
     return Object.entries(map).map(([nome,valor],i)=>({nome,valor,cor:PALETTE[i%PALETTE.length]})).sort((a,b)=>b.valor-a.valor).slice(0,7);
   },[doMes]);
 
-  const ultimas  = [...transacoes].sort((a,b)=>parseData(b.data)-parseData(a.data)).slice(0,6);
+  const ultimas  = [...transacoes].filter(t=>t.cat!=="Transferência").sort((a,b)=>parseData(b.data)-parseData(a.data)).slice(0,6);
   const proximas = transacoes.filter(t=>t.tipo==="desp"&&t.status==="pendente").sort((a,b)=>parseData(a.data)-parseData(b.data)).slice(0,4);
 
   const pagarFatura = async () => {
@@ -434,40 +434,85 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
 
 // ─── TRANSAÇÕES ───────────────────────────────────────────────────────────────
 function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, setCartaoCompras, loading }) {
-  const [tab, setTab] = useState("lancamentos");
-  const [modal, setModal]   = useState(false);
+  const [tab, setTab]           = useState("lancamentos");
+  const [modal, setModal]       = useState(false);  // false | "novo" | objeto (editar)
   const [modalCartao, setModalCartao] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [filtro, setFiltro] = useState("todos");
-  const [form, setForm]     = useState({ tipo:"desp", descricao:"", valor:"", data:hoje(), cat:"", subcat:"", conta:"", status:"pago", recorrencia:"nenhuma" });
+  const [saving, setSaving]     = useState(false);
+  const [filtro, setFiltro]     = useState("todos");
+
+  const formVazio = { tipo:"desp", descricao:"", valor:"", data:hoje(), cat:"", subcat:"", conta:"", contaDestino:"", status:"pago", recorrencia:"nenhuma" };
+  const [form, setForm] = useState(formVazio);
   const [formCartao, setFormCartao] = useState({ cartao_id:"", descricao:"", valor:"", data:hoje(), cat:"", subcat:"" });
   const f  = k => v => setForm(p=>({...p,[k]:v}));
   const fc = k => v => setFormCartao(p=>({...p,[k]:v}));
 
+  const cartoes         = contas.filter(c=>c.tipo==="Cartão Crédito");
+  const contaOpts       = contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome);
+  const catOpts         = cats[form.tipo==="rec"?"rec":"desp"].map(c=>c.nome);
   const catAtual        = cats[form.tipo==="rec"?"rec":"desp"].find(c=>c.nome===form.cat);
   const subsDisponiveis = catAtual?.subs||[];
-  const cartoes         = contas.filter(c=>c.tipo==="Cartão Crédito");
+  const catCartaoOpts   = cats.desp.map(c=>c.nome);
+  const catCartaoAtual  = cats.desp.find(c=>c.nome===formCartao.cat);
+  const subsCartao      = catCartaoAtual?.subs||[];
+
+  const modoEditar = modal && typeof modal === "object";
+
+  const abrirEditar = (t) => {
+    setForm({
+      tipo: t.tipo, descricao: t.descricao||"", valor: String(t.valor),
+      data: t.data, cat: t.cat||"", subcat: t.subcat||"",
+      conta: t.conta||"", contaDestino: t.contaDestino||"",
+      status: t.status||"pago", recorrencia: t.recorrencia||"nenhuma"
+    });
+    setModal(t);
+  };
 
   const salvar = async () => {
     if (!form.valor||!form.data) return;
     if (form.tipo==="transf" && (!form.conta||!form.contaDestino)) return;
     if (form.tipo!=="transf" && !form.descricao) return;
     setSaving(true);
-    if (form.tipo==="transf") {
-      // Lança saída na conta de origem e entrada na conta de destino
-      const desc = form.descricao||`Transferência ${form.conta} → ${form.contaDestino}`;
-      const saida   = {id:uid(),tipo:"desp",descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.conta,status:"pago",recorrencia:"nenhuma"};
-      const entrada = {id:uid(),tipo:"rec", descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.contaDestino,status:"pago",recorrencia:"nenhuma"};
-      setTransacoes(p=>[entrada,saida,...p]);
-      await db.insert("transacoes", saida);
-      await db.insert("transacoes", entrada);
+
+    if (modoEditar) {
+      // EDITAR lançamento existente
+      const atualizado = {...modal, ...form, valor:Number(form.valor)};
+      // Se era transf, atualizar os dois lançamentos vinculados (pelo groupId)
+      if (atualizado.cat==="Transferência" && atualizado.groupId) {
+        const pares = transacoes.filter(t=>t.groupId===atualizado.groupId);
+        for (const par of pares) {
+          const upd = par.tipo==="desp"
+            ? {...par, descricao:atualizado.descricao, valor:Number(form.valor), data:form.data, conta:form.conta}
+            : {...par, descricao:atualizado.descricao, valor:Number(form.valor), data:form.data, conta:form.contaDestino};
+          await db.update("transacoes", par.id, {descricao:upd.descricao,valor:upd.valor,data:upd.data,conta:upd.conta});
+          setTransacoes(p=>p.map(t=>t.id===par.id?upd:t));
+        }
+      } else {
+        await db.update("transacoes", atualizado.id, {
+          tipo:atualizado.tipo, descricao:atualizado.descricao, valor:atualizado.valor,
+          data:atualizado.data, cat:atualizado.cat, subcat:atualizado.subcat,
+          conta:atualizado.conta, status:atualizado.status, recorrencia:atualizado.recorrencia
+        });
+        setTransacoes(p=>p.map(t=>t.id===atualizado.id?atualizado:t));
+      }
     } else {
-      const nova = {...form, id:uid(), valor:Number(form.valor)};
-      setTransacoes(p=>[nova,...p]);
-      await db.insert("transacoes", nova);
+      // NOVO lançamento
+      if (form.tipo==="transf") {
+        const groupId = uid();
+        const desc = form.descricao||`Transferência ${form.conta} → ${form.contaDestino}`;
+        const saida   = {id:uid(),groupId,tipo:"desp",descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.conta,status:"pago",recorrencia:"nenhuma"};
+        const entrada = {id:uid(),groupId,tipo:"rec", descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.contaDestino,status:"pago",recorrencia:"nenhuma"};
+        setTransacoes(p=>[entrada,saida,...p]);
+        await db.insert("transacoes", saida);
+        await db.insert("transacoes", entrada);
+      } else {
+        const nova = {...form, id:uid(), valor:Number(form.valor)};
+        setTransacoes(p=>[nova,...p]);
+        await db.insert("transacoes", nova);
+      }
     }
+
     setModal(false);
-    setForm({tipo:"desp",descricao:"",valor:"",data:hoje(),cat:"",subcat:"",conta:"",contaDestino:"",status:"pago",recorrencia:"nenhuma"});
+    setForm(formVazio);
     setSaving(false);
   };
 
@@ -484,35 +529,54 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     setSaving(false);
   };
 
-  const excluir = async id => { await db.remove("transacoes",id); setTransacoes(p=>p.filter(t=>t.id!==id)); };
+  const excluir = async (t) => {
+    // Se for transferência, excluir o par
+    if (t.cat==="Transferência" && t.groupId) {
+      const pares = transacoes.filter(x=>x.groupId===t.groupId);
+      for (const par of pares) { await db.remove("transacoes",par.id); }
+      setTransacoes(p=>p.filter(x=>x.groupId!==t.groupId));
+    } else {
+      await db.remove("transacoes",t.id);
+      setTransacoes(p=>p.filter(x=>x.id!==t.id));
+    }
+  };
   const excluirCompra = async id => { await db.remove("cartao_compras",id); setCartaoCompras(p=>p.filter(c=>c.id!==id)); };
 
-  const lista = [...(filtro==="todos"?transacoes:transacoes.filter(t=>t.tipo===filtro))].sort((a,b)=>parseData(b.data)-parseData(a.data));
-  const catOpts  = cats[form.tipo==="rec"?"rec":"desp"].map(c=>c.nome);
-  const catCartaoOpts = cats.desp.map(c=>c.nome);
-  const contaOpts = contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome);
-  const catCartaoAtual = cats.desp.find(c=>c.nome===formCartao.cat);
-  const subsCartao = catCartaoAtual?.subs||[];
+  // Separar lançamentos: financeiros vs transferências
+  const lancFinanceiros = transacoes.filter(t=>t.cat!=="Transferência");
+  const transferencias  = transacoes.filter(t=>t.cat==="Transferência"&&t.tipo==="desp"); // só 1 lado por transferência
+
+  const listaFin = [...(
+    filtro==="todos" ? lancFinanceiros :
+    filtro==="rec"   ? lancFinanceiros.filter(t=>t.tipo==="rec") :
+                       lancFinanceiros.filter(t=>t.tipo==="desp")
+  )].sort((a,b)=>parseData(b.data)-parseData(a.data));
 
   if (loading) return <Spinner />;
+
+  const CONTA_COR = {};
+  contas.forEach((c,i)=>{ CONTA_COR[c.nome]=PALETTE[i%PALETTE.length]; });
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {/* Tabs */}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {/* Linha 1: abas principais */}
-        <div style={{display:"flex",gap:6}}>
-          {[["lancamentos","💰 Lançamentos"],["cartao","💳 Cartão"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px 8px",borderRadius:9,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
+        <div style={{display:"flex",gap:4}}>
+          {[["lancamentos","💰 Lançamentos"],["transf","🔄 Transferências"],["cartao","💳 Cartão"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px 6px",borderRadius:9,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
           ))}
         </div>
-        {/* Linha 2: filtros + botão */}
         {tab==="lancamentos"&&(
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {["todos","rec","desp"].map(f2=>(
-              <button key={f2} onClick={()=>setFiltro(f2)} style={{padding:"6px 12px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:filtro===f2?C.accent:C.surface,color:filtro===f2?C.bg:C.muted,fontFamily:"inherit"}}>{f2==="todos"?"Todos":f2==="rec"?"Receitas":"Despesas"}</button>
+            {[["todos","Todos"],["rec","📥 Receitas"],["desp","📤 Despesas"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setFiltro(v)} style={{padding:"6px 12px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:filtro===v?C.accent:C.surface,color:filtro===v?C.bg:C.muted,fontFamily:"inherit"}}>{l}</button>
             ))}
-            <Btn onClick={()=>setModal(true)} small style={{marginLeft:"auto"}}>+ Novo</Btn>
+            <Btn onClick={()=>{setForm(formVazio);setModal("novo");}} small style={{marginLeft:"auto"}}>+ Novo</Btn>
+          </div>
+        )}
+        {tab==="transf"&&(
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <Btn onClick={()=>{setForm({...formVazio,tipo:"transf"});setModal("novo");}} small color={C.blue}>+ Transferência</Btn>
           </div>
         )}
         {tab==="cartao"&&(
@@ -522,56 +586,45 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
         )}
       </div>
 
-      {/* Tab lançamentos */}
+      {/* ── Tab: Lançamentos ── */}
       {tab==="lancamentos"&&(
-        lista.length===0
-          ?<Card><Empty icon="💳" msg="Nenhuma transação" sub="Toque em '+ Novo'"/></Card>
+        listaFin.length===0
+          ?<Card><Empty icon="💰" msg="Nenhum lançamento" sub="Toque em '+ Novo' para adicionar"/></Card>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {lista.map(t=>(
-              <Card key={t.id} style={{padding:"12px 14px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.descricao}</div>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-                      {t.cat&&<Badge color={t.tipo==="rec"?C.accent:C.blue}>{t.cat}</Badge>}
-                      {t.subcat&&<Badge color={C.purple}>{t.subcat}</Badge>}
-                      {t.conta&&<Badge color={C.muted}>{t.conta}</Badge>}
-                      <Badge color={t.status==="pago"?C.accent:C.yellow}>{t.status}</Badge>
-                      <span style={{color:C.muted,fontSize:10}}>{t.data}</span>
-                    </div>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
-                    <span style={{color:t.tipo==="rec"?C.accent:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:14}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</span>
-                    <button onClick={()=>excluir(t.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-      )}
-
-      {/* Tab compras no cartão */}
-      {tab==="cartao"&&(
-        cartaoCompras.length===0
-          ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
-          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map(c=>{
-              const cartao=contas.find(ct=>ct.id===c.cartao_id);
+            {listaFin.map(t=>{
+              const contaCor = CONTA_COR[t.conta]||C.muted;
               return (
-                <Card key={c.id} style={{padding:"12px 14px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:5}}>{c.descricao}</div>
-                      <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-                        {cartao&&<Badge color={C.purple}>{cartao.nome}</Badge>}
-                        {c.cat&&<Badge color={C.blue}>{c.cat}</Badge>}
-                        {c.subcat&&<Badge color={C.purple}>{c.subcat}</Badge>}
-                        <span style={{color:C.muted,fontSize:10}}>{c.data}</span>
-                      </div>
+                <Card key={t.id} style={{padding:"0",overflow:"hidden",borderLeft:`3px solid ${t.tipo==="rec"?C.accent:C.red}`}}>
+                  <div style={{display:"flex",alignItems:"stretch"}}>
+                    {/* Ícone tipo */}
+                    <div style={{width:40,display:"flex",alignItems:"center",justifyContent:"center",background:t.tipo==="rec"?C.accent+"18":C.red+"18",flexShrink:0,fontSize:16}}>
+                      {t.tipo==="rec"?"📥":"📤"}
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
-                      <span style={{color:C.red,fontWeight:800,fontFamily:"'DM Mono',monospace",fontSize:14}}>−{fmt(c.valor)}</span>
-                      <button onClick={()=>excluirCompra(c.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14}}>🗑</button>
+                    {/* Conteúdo */}
+                    <div style={{flex:1,padding:"11px 12px",minWidth:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.descricao}</div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                            {/* Conta destacada */}
+                            {t.conta&&(
+                              <span style={{background:contaCor+"22",color:contaCor,border:`1px solid ${contaCor}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{t.conta}</span>
+                            )}
+                            {t.cat&&<Badge color={t.tipo==="rec"?C.accent+"99":C.blue+"99"}>{t.cat}</Badge>}
+                            {t.subcat&&<Badge color={C.purple+"99"}>{t.subcat}</Badge>}
+                            <Badge color={t.status==="pago"?C.accent+"88":C.yellow+"88"}>{t.status}</Badge>
+                            <span style={{color:C.muted,fontSize:10}}>{t.data}</span>
+                          </div>
+                        </div>
+                        {/* Valor e ações */}
+                        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                          <span style={{color:t.tipo==="rec"?C.accent:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:15}}>{t.tipo==="rec"?"+":"−"}{fmt(t.valor)}</span>
+                          <div style={{display:"flex",gap:4}}>
+                            <button onClick={()=>abrirEditar(t)} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",color:C.accent,fontSize:11,fontWeight:700}}>✏️</button>
+                            <button onClick={()=>excluir(t)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:6,padding:"3px 8px",cursor:"pointer",color:C.red,fontSize:11,fontWeight:700}}>🗑</button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </Card>
@@ -580,54 +633,126 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
           </div>
       )}
 
-      {/* Modal novo lançamento */}
+      {/* ── Tab: Transferências ── */}
+      {tab==="transf"&&(
+        transferencias.length===0
+          ?<Card><Empty icon="🔄" msg="Nenhuma transferência" sub="Transferências entre contas não afetam receitas nem despesas"/></Card>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {transferencias.sort((a,b)=>parseData(b.data)-parseData(a.data)).map(t=>{
+              const entrada = transacoes.find(x=>x.groupId===t.groupId&&x.tipo==="rec");
+              return (
+                <Card key={t.id} style={{padding:"0",overflow:"hidden",borderLeft:`3px solid ${C.blue}`}}>
+                  <div style={{display:"flex",alignItems:"stretch"}}>
+                    <div style={{width:40,display:"flex",alignItems:"center",justifyContent:"center",background:C.blue+"18",flexShrink:0,fontSize:16}}>🔄</div>
+                    <div style={{flex:1,padding:"11px 12px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                        <div>
+                          <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:5}}>{t.descricao}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{background:CONTA_COR[t.conta]+"22",color:CONTA_COR[t.conta]||C.muted,border:`1px solid ${CONTA_COR[t.conta]||C.muted}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{t.conta||"—"}</span>
+                              <span style={{color:C.blue,fontSize:14}}>→</span>
+                              <span style={{background:(CONTA_COR[entrada?.conta]||C.accent)+"22",color:CONTA_COR[entrada?.conta]||C.accent,border:`1px solid ${CONTA_COR[entrada?.conta]||C.accent}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{entrada?.conta||"—"}</span>
+                            </div>
+                            <span style={{color:C.muted,fontSize:10}}>{t.data}</span>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                          <span style={{color:C.blue,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:15}}>{fmt(t.valor)}</span>
+                          <button onClick={()=>excluir(t)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:6,padding:"3px 8px",cursor:"pointer",color:C.red,fontSize:11,fontWeight:700}}>🗑</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+      )}
+
+      {/* ── Tab: Compras no Cartão ── */}
+      {tab==="cartao"&&(
+        cartaoCompras.length===0
+          ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map(c=>{
+              const cartao=contas.find(ct=>ct.id===c.cartao_id);
+              const cartaoCor = cartao?CONTA_COR[cartao.nome]||C.purple:C.purple;
+              return (
+                <Card key={c.id} style={{padding:"0",overflow:"hidden",borderLeft:`3px solid ${cartaoCor}`}}>
+                  <div style={{display:"flex",alignItems:"stretch"}}>
+                    <div style={{width:40,display:"flex",alignItems:"center",justifyContent:"center",background:cartaoCor+"18",flexShrink:0,fontSize:16}}>💳</div>
+                    <div style={{flex:1,padding:"11px 12px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.descricao}</div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                            {cartao&&<span style={{background:cartaoCor+"22",color:cartaoCor,border:`1px solid ${cartaoCor}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{cartao.nome}</span>}
+                            {c.cat&&<Badge color={C.blue+"99"}>{c.cat}</Badge>}
+                            {c.subcat&&<Badge color={C.purple+"99"}>{c.subcat}</Badge>}
+                            <span style={{color:C.muted,fontSize:10}}>{c.data}</span>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                          <span style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:15}}>−{fmt(c.valor)}</span>
+                          <button onClick={()=>excluirCompra(c.id)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:6,padding:"3px 8px",cursor:"pointer",color:C.red,fontSize:11,fontWeight:700}}>🗑</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+      )}
+
+      {/* ── Modal: Novo/Editar lançamento ── */}
       {modal&&(
-        <Modal title="Nova Transação" onClose={()=>setModal(false)}>
+        <Modal title={modoEditar?"Editar Lançamento":form.tipo==="transf"?"Nova Transferência":"Novo Lançamento"} onClose={()=>{setModal(false);setForm(formVazio);}}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div style={{display:"flex",gap:8}}>
-              {[["rec","Receita",C.accent],["desp","Despesa",C.red],["transf","Transferência",C.blue]].map(([tp,label,cor])=>(
-                <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
-              ))}
-            </div>
+            {!modoEditar&&(
+              <div style={{display:"flex",gap:6}}>
+                {[["rec","📥 Receita",C.accent],["desp","📤 Despesa",C.red],["transf","🔄 Transferência",C.blue]].map(([tp,label,cor])=>(
+                  <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:11,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
+                ))}
+              </div>
+            )}
             {form.tipo==="transf" ? (
               <>
-                <InputField label="Descrição (opcional)" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Reserva de emergência" />
-                <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
-                <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
-                <InputField label="Conta de Origem (débito)" value={form.conta} onChange={f("conta")} options={contaOpts.length?contaOpts:["(cadastre contas em ⚙️)"]} />
-                <InputField label="Conta de Destino (crédito)" value={form.contaDestino||""} onChange={f("contaDestino")} options={contaOpts.length?contaOpts:["(cadastre contas em ⚙️)"]} />
-                <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:10,padding:"10px 14px",color:C.muted,fontSize:12}}>
-                  💡 A transferência será debitada da conta de origem e creditada na conta de destino automaticamente.
-                </div>
+                <InputField label="Descrição (opcional)" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Reserva de emergência"/>
+                <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
+                <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
+                <InputField label="Conta de Origem" value={form.conta} onChange={f("conta")} options={contaOpts}/>
+                <InputField label="Conta de Destino" value={form.contaDestino||""} onChange={f("contaDestino")} options={contaOpts}/>
                 <Btn onClick={salvar} full color={C.blue}>{saving?"Salvando...":"Registrar Transferência"}</Btn>
               </>
             ) : (
               <>
-                <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado" />
+                <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado"/>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00" />
-                  <InputField label="Data" value={form.data} onChange={f("data")} type="date" />
+                  <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
+                  <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
                 </div>
-                <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]} />
+                <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]}/>
                 {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
                 {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                   <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
                   <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
                 </div>
-                <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar Transação"}</Btn>
+                <Btn onClick={salvar} full>{saving?modoEditar?"Salvando...":"Salvando...":modoEditar?"Salvar Alterações":"Salvar Lançamento"}</Btn>
               </>
             )}
           </div>
         </Modal>
       )}
 
-      {/* Modal compra no cartão */}
+      {/* ── Modal: Compra no Cartão ── */}
       {modalCartao&&(
         <Modal title="Compra no Cartão de Crédito" onClose={()=>setModalCartao(false)}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             {cartoes.length===0
-              ?<div style={{color:C.muted,textAlign:"center",padding:20}}>Nenhum cartão cadastrado. Adicione em Configurações → Cartões.</div>
+              ?<div style={{color:C.muted,textAlign:"center",padding:20}}>Nenhum cartão cadastrado. Adicione em ⚙️ Configurações.</div>
               :<>
                 <InputField label="Cartão" value={formCartao.cartao_id} onChange={fc("cartao_id")} options={cartoes.map(c=>c.nome)}/>
                 <InputField label="Descrição" value={formCartao.descricao} onChange={fc("descricao")} placeholder="Ex: iFood, Netflix..."/>
@@ -638,7 +763,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
                 <InputField label="Categoria" value={formCartao.cat} onChange={v=>{fc("cat")(v);fc("subcat")("");}} options={catCartaoOpts}/>
                 {subsCartao.length>0&&<InputField label="Subcategoria" value={formCartao.subcat} onChange={fc("subcat")} options={subsCartao}/>}
                 <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:10,padding:"10px 14px",color:C.muted,fontSize:12}}>
-                  💡 Essa compra vai para a fatura do cartão. Para contabilizar como despesa, pague a fatura pelo Dashboard.
+                  💡 Compra vai para a fatura. Pague pelo Dashboard para descontar da conta.
                 </div>
                 <Btn onClick={salvarCartao} full>{saving?"Salvando...":"Adicionar à Fatura"}</Btn>
               </>
@@ -653,8 +778,8 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
 // ─── PATRIMÔNIO ───────────────────────────────────────────────────────────────
 function Patrimonio({ transacoes, contas, ativos, loading }) {
   // Saldo real = saldo inicial cadastrado + receitas - despesas de todos os lançamentos
-  const totalRec  = transacoes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
-  const totalDesp = transacoes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const totalRec  = transacoes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+  const totalDesp = transacoes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const saldoBase = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
   const saldoContas = saldoBase + totalRec - totalDesp;
   const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
@@ -662,7 +787,7 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
 
   const evolucao = useMemo(()=>{
     const map={};
-    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; if(!map[key])map[key]={rec:0,desp:0}; if(t.tipo==="rec")map[key].rec+=Number(t.valor); if(t.tipo==="desp")map[key].desp+=Number(t.valor); });
+    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; if(!map[key])map[key]={rec:0,desp:0}; if(t.tipo==="rec"&&t.cat!=="Transferência")map[key].rec+=Number(t.valor); if(t.tipo==="desp"&&t.cat!=="Transferência")map[key].desp+=Number(t.valor); });
     let acc=0;
     return Object.entries(map).sort().map(([k,v])=>{ acc+=v.rec-v.desp; return {mes:k.slice(5)+"/"+k.slice(2,4),resultado:v.rec-v.desp,acumulado:acc}; });
   },[transacoes]);
@@ -935,11 +1060,11 @@ function Relatorios({ transacoes, ativos, loading }) {
   const now=new Date(); const mesN=now.getMonth()+1,anoN=now.getFullYear();
   const doMes = transacoes.filter(t=>{ const {m,a}=getMesAno(t.data); return m===mesN&&a===anoN; });
   const doAno = transacoes.filter(t=>getMesAno(t.data).a===anoN);
-  const recMes  = doMes.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
-  const despMes = doMes.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const recMes  = doMes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+  const despMes = doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const recAno  = doAno.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
   const despAno = doAno.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
-  const catDesp={}; doMes.filter(t=>t.tipo==="desp").forEach(t=>{catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor);});
+  const catDesp={}; doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").forEach(t=>{catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor);});
   const topCat=Object.entries(catDesp).sort((a,b)=>b[1]-a[1]);
   const totalAtual  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const totalInvest = ativos.reduce((s,a)=>s+Number(a.pmedio)*Number(a.qtd),0);
