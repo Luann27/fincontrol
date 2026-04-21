@@ -27,10 +27,15 @@ const db = {
   },
   async insert(table, row) {
     try {
+      // Limpa campos undefined/null/empty para evitar erros no Supabase
+      const clean = Object.fromEntries(
+        Object.entries({ ...row, user_id: USER_ID })
+          .filter(([,v]) => v !== undefined && v !== null && v !== "")
+      );
       const r = await req(`${SUPA_URL}/rest/v1/${table}`, {
         method: "POST",
         headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ ...row, user_id: USER_ID })
+        body: JSON.stringify(clean)
       });
       if (!r.ok) { const e = await r.text(); console.error(`insert ${table}:`, e); return false; }
       return true;
@@ -152,14 +157,11 @@ const StatCard = ({label,value,color=C.text,sub}) => (
 const SectionTitle = ({children}) => <div style={{color:C.muted,fontSize:10,fontWeight:700,letterSpacing:2,textTransform:"uppercase",padding:"4px 0 8px"}}>{children}</div>;
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos, setTransacoes, setContas, setCartaoPagamentos, loading }) {
+function Dashboard({ transacoes, contas, ativos, setTransacoes, setContas, loading }) {
   const now  = new Date();
   const [mesSel, setMesSel] = useState(now.getMonth()+1);
   const [anoSel, setAnoSel] = useState(now.getFullYear());
-  const [modalFatura, setModalFatura] = useState(null);
-  const [formPag, setFormPag] = useState({ conta_id:"", valor:"", data:hoje() });
   const [saving, setSaving] = useState(false);
-  const fp = k => v => setFormPag(p=>({...p,[k]:v}));
 
   const mesN = mesSel, anoN = anoSel;
   const mesNome = new Date(anoSel, mesSel-1, 1).toLocaleString("pt-BR",{month:"long",year:"numeric"});
@@ -181,20 +183,11 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
   // Saldo real = saldo inicial + todos os lançamentos
   const totalRecAll  = transacoes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const totalDespAll = transacoes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
-  const saldoBase    = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const saldoBase    = contas.reduce((s,c)=>s+Number(c.saldo),0);
   const saldoContas  = saldoBase + totalRecAll - totalDespAll;
   const valorAtivos  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const total        = saldoContas + valorAtivos;
 
-  // Fatura de cada cartão = compras não pagas
-  const cartoes = contas.filter(c=>c.tipo==="Cartão Crédito");
-  const faturas = cartoes.map(cartao => {
-    const compras = cartaoCompras.filter(c=>c.cartao_id===cartao.id);
-    const pagos   = cartaoPagamentos.filter(p=>p.cartao_id===cartao.id).reduce((s,p)=>s+Number(p.valor),0);
-    const totalCompras = compras.reduce((s,c)=>s+Number(c.valor),0);
-    const fatura  = Math.max(0, totalCompras - pagos);
-    return { ...cartao, fatura, totalCompras, pagos };
-  }).filter(c=>c.fatura>0);
 
   const byMonth = useMemo(()=>{
     const meses={};
@@ -225,33 +218,11 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
   const ultimas  = [...transacoes].filter(t=>t.cat!=="Transferência").sort((a,b)=>parseData(b.data)-parseData(a.data)).slice(0,6);
   const proximas = transacoes.filter(t=>t.tipo==="desp"&&t.status==="pendente").sort((a,b)=>parseData(a.data)-parseData(b.data)).slice(0,4);
 
-  const pagarFatura = async () => {
-    if (!formPag.conta_id || !formPag.valor || !modalFatura) return;
-    setSaving(true);
-    const contaSelecionada = contas.find(c => c.nome === formPag.conta_id);
-    if (!contaSelecionada) { setSaving(false); return; }
-    // Registra pagamento
-    const pag = { id:uid(), cartao_id:modalFatura.id, conta_id:contaSelecionada.id, valor:Number(formPag.valor), data:formPag.data };
-    const ok = await db.insert("cartao_pagamentos", pag);
-    if (ok) {
-      setCartaoPagamentos(p=>[pag,...p]);
-      // Debita da conta
-      const novoSaldo = Number(contaSelecionada.saldo) - Number(formPag.valor);
-      await db.update("contas", contaSelecionada.id, { saldo: novoSaldo });
-      setContas(p=>p.map(c=>c.id===contaSelecionada.id?{...c,saldo:novoSaldo}:c));
-      // Lança como despesa nas transações
-      const despPag = { id:uid(), tipo:"desp", descricao:`Pagamento fatura ${modalFatura.nome}`, valor:Number(formPag.valor), data:formPag.data, cat:"Cartão Crédito", subcat:"", conta:contaSelecionada.nome, status:"pago", recorrencia:"nenhuma" };
-      await db.insert("transacoes", despPag);
-      setTransacoes(p=>[despPag,...p]);
-    }
-    setModalFatura(null);
-    setFormPag({conta_id:"",valor:"",data:hoje()});
-    setSaving(false);
-  };
+
 
   if (loading) return <Spinner />;
 
-  const contasBancarias = contas.filter(c=>c.tipo!=="Cartão Crédito");
+  const contasBancarias = contas;
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -282,29 +253,6 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         <StatCard label="Resultado" value={fmt(resultado)} color={resultado>=0?C.accent:C.red} sub="saldo do mês" />
 
       </div>
-
-      {/* Faturas dos cartões */}
-      {faturas.length > 0 && (
-        <Card style={{borderColor:C.red+"44"}}>
-          <div style={{color:C.text,fontWeight:700,marginBottom:12,fontSize:14}}>💳 Faturas em Aberto</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {faturas.map(cartao=>(
-              <div key={cartao.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:10}}>
-                <div>
-                  <div style={{color:C.text,fontWeight:600,fontSize:13}}>{cartao.nome}</div>
-                  <div style={{color:C.muted,fontSize:11,marginTop:2}}>
-                    {cartao.vencimento?`Vence dia ${cartao.vencimento} · `:""}{cartao.totalCompras>0?`${fmt(cartao.totalCompras)} em compras`:""}
-                  </div>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:16}}>{fmt(cartao.fatura)}</span>
-                  <Btn small onClick={()=>{setModalFatura(cartao);setFormPag({conta_id:"",valor:String(cartao.fatura.toFixed(2)),data:hoje()});}}>Pagar</Btn>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
 
       {/* Gráfico histórico */}
       {byMonth.length>=2&&(
@@ -412,48 +360,26 @@ function Dashboard({ transacoes, contas, ativos, cartaoCompras, cartaoPagamentos
         </Card>
       </div>
 
-      {/* Modal pagar fatura */}
-      {modalFatura&&(
-        <Modal title={`Pagar Fatura — ${modalFatura.nome}`} onClose={()=>setModalFatura(null)}>
-          <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:10,padding:"10px 14px"}}>
-              <div style={{color:C.muted,fontSize:11}}>Fatura atual</div>
-              <div style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:22}}>{fmt(modalFatura.fatura)}</div>
-            </div>
-            <InputField label="Débito na Conta" value={formPag.conta_id} onChange={fp("conta_id")} options={contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome)} />
-            <InputField label="Valor a Pagar (R$)" value={formPag.valor} onChange={fp("valor")} type="number" placeholder="0,00" />
-            <InputField label="Data do Pagamento" value={formPag.data} onChange={fp("data")} type="date" />
-            <div style={{color:C.muted,fontSize:12}}>💡 O valor será debitado do saldo da conta selecionada na data informada.</div>
-            <Btn onClick={pagarFatura} full color={C.red}>{saving?"Processando...":"Confirmar Pagamento"}</Btn>
-          </div>
-        </Modal>
-      )}
+
     </div>
   );
 }
 
-// ─── TRANSAÇÕES ───────────────────────────────────────────────────────────────
-function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, setCartaoCompras, loading }) {
+ ───────────────────────────────────────────────────────────────
+function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
   const [tab, setTab]           = useState("lancamentos");
   const [modal, setModal]       = useState(false);  // false | "novo" | objeto (editar)
-  const [modalCartao, setModalCartao] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [filtro, setFiltro]     = useState("todos");
 
   const formVazio = { tipo:"desp", descricao:"", valor:"", data:hoje(), cat:"", subcat:"", conta:"", contaDestino:"", status:"pago", recorrencia:"nenhuma" };
   const [form, setForm] = useState(formVazio);
-  const [formCartao, setFormCartao] = useState({ cartao_id:"", descricao:"", valor:"", data:hoje(), cat:"", subcat:"" });
   const f  = k => v => setForm(p=>({...p,[k]:v}));
-  const fc = k => v => setFormCartao(p=>({...p,[k]:v}));
 
-  const cartoes         = contas.filter(c=>c.tipo==="Cartão Crédito");
-  const contaOpts       = contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>c.nome);
+  const contaOpts       = contas.map(c=>c.nome);
   const catOpts         = cats[form.tipo==="rec"?"rec":"desp"].map(c=>c.nome);
   const catAtual        = cats[form.tipo==="rec"?"rec":"desp"].find(c=>c.nome===form.cat);
   const subsDisponiveis = catAtual?.subs||[];
-  const catCartaoOpts   = cats.desp.map(c=>c.nome);
-  const catCartaoAtual  = cats.desp.find(c=>c.nome===formCartao.cat);
-  const subsCartao      = catCartaoAtual?.subs||[];
 
   const modoEditar = modal && typeof modal === "object";
 
@@ -476,9 +402,9 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     if (modoEditar) {
       // EDITAR lançamento existente
       const atualizado = {...modal, ...form, valor:Number(form.valor)};
-      // Se era transf, atualizar os dois lançamentos vinculados (pelo groupId)
-      if (atualizado.cat==="Transferência" && atualizado.groupId) {
-        const pares = transacoes.filter(t=>t.groupId===atualizado.groupId);
+      // Se era transf, atualizar os dois lançamentos vinculados (pelo group_id)
+      if (atualizado.cat==="Transferência" && atualizado.group_id) {
+        const pares = transacoes.filter(t=>t.group_id===atualizado.group_id);
         for (const par of pares) {
           const upd = par.tipo==="desp"
             ? {...par, descricao:atualizado.descricao, valor:Number(form.valor), data:form.data, conta:form.conta}
@@ -497,10 +423,10 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     } else {
       // NOVO lançamento
       if (form.tipo==="transf") {
-        const groupId = uid();
+        const group_id = uid();
         const desc = form.descricao||`Transferência ${form.conta} → ${form.contaDestino}`;
-        const saida   = {id:uid(),groupId,tipo:"desp",descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.conta,status:"pago",recorrencia:"nenhuma"};
-        const entrada = {id:uid(),groupId,tipo:"rec", descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.contaDestino,status:"pago",recorrencia:"nenhuma"};
+        const saida   = {id:uid(),group_id,tipo:"desp",descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.conta,status:"pago",recorrencia:"nenhuma"};
+        const entrada = {id:uid(),group_id,tipo:"rec", descricao:desc,valor:Number(form.valor),data:form.data,cat:"Transferência",subcat:"",conta:form.contaDestino,status:"pago",recorrencia:"nenhuma"};
         setTransacoes(p=>[entrada,saida,...p]);
         await db.insert("transacoes", saida);
         await db.insert("transacoes", entrada);
@@ -516,31 +442,19 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
     setSaving(false);
   };
 
-  const salvarCartao = async () => {
-    if (!formCartao.cartao_id||!formCartao.descricao||!formCartao.valor) return;
-    setSaving(true);
-    const cartao = cartoes.find(c=>c.nome===formCartao.cartao_id);
-    if (!cartao) { setSaving(false); return; }
-    const nova = {...formCartao, id:uid(), cartao_id:cartao.id, valor:Number(formCartao.valor)};
-    setCartaoCompras(p=>[nova,...p]);
-    await db.insert("cartao_compras", nova);
-    setModalCartao(false);
-    setFormCartao({cartao_id:"",descricao:"",valor:"",data:hoje(),cat:"",subcat:""});
-    setSaving(false);
-  };
+
 
   const excluir = async (t) => {
     // Se for transferência, excluir o par
-    if (t.cat==="Transferência" && t.groupId) {
-      const pares = transacoes.filter(x=>x.groupId===t.groupId);
+    if (t.cat==="Transferência" && t.group_id) {
+      const pares = transacoes.filter(x=>x.group_id===t.group_id);
       for (const par of pares) { await db.remove("transacoes",par.id); }
-      setTransacoes(p=>p.filter(x=>x.groupId!==t.groupId));
+      setTransacoes(p=>p.filter(x=>x.group_id!==t.group_id));
     } else {
       await db.remove("transacoes",t.id);
       setTransacoes(p=>p.filter(x=>x.id!==t.id));
     }
   };
-  const excluirCompra = async id => { await db.remove("cartao_compras",id); setCartaoCompras(p=>p.filter(c=>c.id!==id)); };
 
   // Separar lançamentos: financeiros vs transferências
   const lancFinanceiros = transacoes.filter(t=>t.cat!=="Transferência");
@@ -562,7 +476,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
       {/* Tabs */}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         <div style={{display:"flex",gap:4}}>
-          {[["lancamentos","💰 Lançamentos"],["transf","🔄 Transferências"],["cartao","💳 Cartão"]].map(([id,label])=>(
+          {[["lancamentos","💰 Lançamentos"],["transf","🔄 Transferências"]].map(([id,label])=>(
             <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px 6px",borderRadius:9,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:tab===id?C.card:C.surface,color:tab===id?C.text:C.muted,fontFamily:"inherit",boxShadow:tab===id?`0 0 0 1px ${C.border}`:"none"}}>{label}</button>
           ))}
         </div>
@@ -579,11 +493,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
             <Btn onClick={()=>{setForm({...formVazio,tipo:"transf"});setModal("novo");}} small color={C.blue}>+ Transferência</Btn>
           </div>
         )}
-        {tab==="cartao"&&(
-          <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <Btn onClick={()=>setModalCartao(true)} small>+ Compra no Cartão</Btn>
-          </div>
-        )}
+
       </div>
 
       {/* ── Tab: Lançamentos ── */}
@@ -639,7 +549,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
           ?<Card><Empty icon="🔄" msg="Nenhuma transferência" sub="Transferências entre contas não afetam receitas nem despesas"/></Card>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
             {transferencias.sort((a,b)=>parseData(b.data)-parseData(a.data)).map(t=>{
-              const entrada = transacoes.find(x=>x.groupId===t.groupId&&x.tipo==="rec");
+              const entrada = transacoes.find(x=>x.group_id===t.group_id&&x.tipo==="rec");
               return (
                 <Card key={t.id} style={{padding:"0",overflow:"hidden",borderLeft:`3px solid ${C.blue}`}}>
                   <div style={{display:"flex",alignItems:"stretch"}}>
@@ -670,124 +580,28 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, cartaoCompras, se
           </div>
       )}
 
-      {/* ── Tab: Compras no Cartão ── */}
-      {tab==="cartao"&&(
-        cartaoCompras.length===0
-          ?<Card><Empty icon="💳" msg="Nenhuma compra no cartão" sub="Adicione compras individuais na fatura"/></Card>
-          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {[...cartaoCompras].sort((a,b)=>parseData(b.data)-parseData(a.data)).map(c=>{
-              const cartao=contas.find(ct=>ct.id===c.cartao_id);
-              const cartaoCor = cartao?CONTA_COR[cartao.nome]||C.purple:C.purple;
-              return (
-                <Card key={c.id} style={{padding:"0",overflow:"hidden",borderLeft:`3px solid ${cartaoCor}`}}>
-                  <div style={{display:"flex",alignItems:"stretch"}}>
-                    <div style={{width:40,display:"flex",alignItems:"center",justifyContent:"center",background:cartaoCor+"18",flexShrink:0,fontSize:16}}>💳</div>
-                    <div style={{flex:1,padding:"11px 12px"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{color:C.text,fontSize:13,fontWeight:600,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.descricao}</div>
-                          <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-                            {cartao&&<span style={{background:cartaoCor+"22",color:cartaoCor,border:`1px solid ${cartaoCor}44`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{cartao.nome}</span>}
-                            {c.cat&&<Badge color={C.blue+"99"}>{c.cat}</Badge>}
-                            {c.subcat&&<Badge color={C.purple+"99"}>{c.subcat}</Badge>}
-                            <span style={{color:C.muted,fontSize:10}}>{c.data}</span>
-                          </div>
-                        </div>
-                        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
-                          <span style={{color:C.red,fontWeight:900,fontFamily:"'DM Mono',monospace",fontSize:15}}>−{fmt(c.valor)}</span>
-                          <button onClick={()=>excluirCompra(c.id)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:6,padding:"3px 8px",cursor:"pointer",color:C.red,fontSize:11,fontWeight:700}}>🗑</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-      )}
-
-      {/* ── Modal: Novo/Editar lançamento ── */}
-      {modal&&(
-        <Modal title={modoEditar?"Editar Lançamento":form.tipo==="transf"?"Nova Transferência":"Novo Lançamento"} onClose={()=>{setModal(false);setForm(formVazio);}}>
-          <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            {!modoEditar&&(
-              <div style={{display:"flex",gap:6}}>
-                {[["rec","📥 Receita",C.accent],["desp","📤 Despesa",C.red],["transf","🔄 Transferência",C.blue]].map(([tp,label,cor])=>(
-                  <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:11,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
-                ))}
-              </div>
-            )}
-            {form.tipo==="transf" ? (
-              <>
-                <InputField label="Descrição (opcional)" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Reserva de emergência"/>
-                <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
-                <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
-                <InputField label="Conta de Origem" value={form.conta} onChange={f("conta")} options={contaOpts}/>
-                <InputField label="Conta de Destino" value={form.contaDestino||""} onChange={f("contaDestino")} options={contaOpts}/>
-                <Btn onClick={salvar} full color={C.blue}>{saving?"Salvando...":"Registrar Transferência"}</Btn>
-              </>
-            ) : (
-              <>
-                <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado"/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
-                  <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
-                </div>
-                <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]}/>
-                {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
-                {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
-                  <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
-                </div>
-                <Btn onClick={salvar} full>{saving?modoEditar?"Salvando...":"Salvando...":modoEditar?"Salvar Alterações":"Salvar Lançamento"}</Btn>
-              </>
-            )}
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Modal: Compra no Cartão ── */}
-      {modalCartao&&(
-        <Modal title="Compra no Cartão de Crédito" onClose={()=>setModalCartao(false)}>
-          <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            {cartoes.length===0
-              ?<div style={{color:C.muted,textAlign:"center",padding:20}}>Nenhum cartão cadastrado. Adicione em ⚙️ Configurações.</div>
-              :<>
-                <InputField label="Cartão" value={formCartao.cartao_id} onChange={fc("cartao_id")} options={cartoes.map(c=>c.nome)}/>
-                <InputField label="Descrição" value={formCartao.descricao} onChange={fc("descricao")} placeholder="Ex: iFood, Netflix..."/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <InputField label="Valor (R$)" value={formCartao.valor} onChange={fc("valor")} type="number" placeholder="0,00"/>
-                  <InputField label="Data" value={formCartao.data} onChange={fc("data")} type="date"/>
-                </div>
-                <InputField label="Categoria" value={formCartao.cat} onChange={v=>{fc("cat")(v);fc("subcat")("");}} options={catCartaoOpts}/>
-                {subsCartao.length>0&&<InputField label="Subcategoria" value={formCartao.subcat} onChange={fc("subcat")} options={subsCartao}/>}
-                <div style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:10,padding:"10px 14px",color:C.muted,fontSize:12}}>
-                  💡 Compra vai para a fatura. Pague pelo Dashboard para descontar da conta.
-                </div>
-                <Btn onClick={salvarCartao} full>{saving?"Salvando...":"Adicionar à Fatura"}</Btn>
-              </>
-            }
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
 
 // ─── PATRIMÔNIO ───────────────────────────────────────────────────────────────
 function Patrimonio({ transacoes, contas, ativos, loading }) {
-  // Saldo real = saldo inicial cadastrado + receitas - despesas de todos os lançamentos
   const totalRec  = transacoes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const totalDesp = transacoes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
-  const saldoBase = contas.filter(c=>c.tipo!=="Cartão Crédito").reduce((s,c)=>s+Number(c.saldo),0);
+  const saldoBase = contas.reduce((s,c)=>s+Number(c.saldo),0);
   const saldoContas = saldoBase + totalRec - totalDesp;
   const valorAtivos = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
   const total = saldoContas + valorAtivos;
 
   const evolucao = useMemo(()=>{
     const map={};
-    transacoes.forEach(t=>{ const d=new Date(t.data); const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; if(!map[key])map[key]={rec:0,desp:0}; if(t.tipo==="rec"&&t.cat!=="Transferência")map[key].rec+=Number(t.valor); if(t.tipo==="desp"&&t.cat!=="Transferência")map[key].desp+=Number(t.valor); });
+    transacoes.forEach(t=>{
+      const {m,a}=getMesAno(t.data);
+      const key=`${a}-${String(m).padStart(2,"0")}`;
+      if(!map[key])map[key]={rec:0,desp:0};
+      if(t.tipo==="rec"&&t.cat!=="Transferência")map[key].rec+=Number(t.valor);
+      if(t.tipo==="desp"&&t.cat!=="Transferência")map[key].desp+=Number(t.valor);
+    });
     let acc=0;
     return Object.entries(map).sort().map(([k,v])=>{ acc+=v.rec-v.desp; return {mes:k.slice(5)+"/"+k.slice(2,4),resultado:v.rec-v.desp,acumulado:acc}; });
   },[transacoes]);
@@ -862,14 +676,16 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
         </Card>
       )}
 
-      {contas.filter(c=>c.tipo!=="Cartão Crédito").length>0&&(
+      {contas.length>0&&(
         <Card>
           <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>Saldo por Conta</div>
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {contas.filter(c=>c.tipo!=="Cartão Crédito").map(c=>{
-              const rec  = transacoes.filter(t=>t.tipo==="rec" &&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
-              const desp = transacoes.filter(t=>t.tipo==="desp"&&t.conta===c.nome).reduce((s,t)=>s+Number(t.valor),0);
-              const saldoReal = Number(c.saldo) + rec - desp;
+            {contas.map(c=>{
+              const rec  = transacoes.filter(t=>t.tipo==="rec" &&t.conta===c.nome&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+              const desp = transacoes.filter(t=>t.tipo==="desp"&&t.conta===c.nome&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+              const transfsEnt = transacoes.filter(t=>t.tipo==="rec" &&t.conta===c.nome&&t.cat==="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+              const transfsSai = transacoes.filter(t=>t.tipo==="desp"&&t.conta===c.nome&&t.cat==="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+              const saldoReal = Number(c.saldo) + rec - desp + transfsEnt - transfsSai;
               const pct = saldoContas>0?(saldoReal/saldoContas)*100:0;
               return (
                 <div key={c.id}>
@@ -890,27 +706,21 @@ function Patrimonio({ transacoes, contas, ativos, loading }) {
 
 // ─── INVESTIMENTOS ────────────────────────────────────────────────────────────
 function Investimentos({ ativos, setAtivos, loading }) {
-  const [modal, setModal]       = useState(false);
-  const [editModal, setEditModal] = useState(null); // ativo a editar
-  const [saving, setSaving]     = useState(false);
+  const [modal, setModal]         = useState(false);
+  const [editModal, setEditModal] = useState(null);
+  const [saving, setSaving]       = useState(false);
   const [novoPreco, setNovoPreco] = useState("");
-  const [cotando, setCotando]   = useState(false);
-  const [form, setForm]         = useState({ ticker:"", qtd:"", pmedio:"", atual:"", setor:"" });
+  const [cotando, setCotando]     = useState(false);
+  const [form, setForm]           = useState({ ticker:"", qtd:"", pmedio:"", atual:"", setor:"" });
   const f = k => v => setForm(p=>({...p,[k]:v}));
 
-  // Busca cotação via brapi.dev (suporta ações e ETFs brasileiros)
   const buscarCotacao = async (ticker) => {
     setCotando(true);
     try {
       const r = await fetch(`https://brapi.dev/api/quote/${ticker.toUpperCase()}?token=demo`);
-      if (r.ok) {
-        const data = await r.json();
-        const preco = data?.results?.[0]?.regularMarketPrice;
-        if (preco) return preco.toFixed(2);
-      }
-    } catch(e) { console.error("Cotação:", e); }
-    finally { setCotando(false); }
-    return null;
+      if (r.ok) { const data=await r.json(); const preco=data?.results?.[0]?.regularMarketPrice; if(preco){ setCotando(false); return preco.toFixed(2); } }
+    } catch(e) {}
+    setCotando(false); return null;
   };
 
   const salvar = async () => {
@@ -919,30 +729,23 @@ function Investimentos({ ativos, setAtivos, loading }) {
     const novo = {...form, id:uid(), qtd:Number(form.qtd), pmedio:Number(form.pmedio), atual:Number(form.atual||form.pmedio)};
     setAtivos(p=>[...p,novo]);
     await db.insert("ativos", novo);
-    setModal(false);
-    setForm({ticker:"",qtd:"",pmedio:"",atual:"",setor:""});
-    setSaving(false);
+    setModal(false); setForm({ticker:"",qtd:"",pmedio:"",atual:"",setor:""}); setSaving(false);
   };
 
   const salvarPreco = async () => {
     if (!editModal||!novoPreco) return;
     setSaving(true);
-    const ok = await db.update("ativos", editModal.id, { atual: Number(novoPreco) });
-    if (ok) setAtivos(p=>p.map(a=>a.id===editModal.id?{...a,atual:Number(novoPreco)}:a));
-    setEditModal(null);
-    setNovoPreco("");
-    setSaving(false);
+    await db.update("ativos", editModal.id, { atual: Number(novoPreco) });
+    setAtivos(p=>p.map(a=>a.id===editModal.id?{...a,atual:Number(novoPreco)}:a));
+    setEditModal(null); setNovoPreco(""); setSaving(false);
   };
 
   const excluir = async id => { await db.remove("ativos",id); setAtivos(p=>p.filter(a=>a.id!==id)); };
 
   const carteira = ativos.map((a,i)=>({
-    ...a,
-    vinvest: Number(a.qtd)*Number(a.pmedio),
-    vatual:  Number(a.qtd)*Number(a.atual||a.pmedio),
-    lucro:   (Number(a.atual||a.pmedio)-Number(a.pmedio))*Number(a.qtd),
-    pct:     ((Number(a.atual||a.pmedio)-Number(a.pmedio))/Number(a.pmedio))*100,
-    cor: PALETTE[i%PALETTE.length]
+    ...a, vinvest:Number(a.qtd)*Number(a.pmedio), vatual:Number(a.qtd)*Number(a.atual||a.pmedio),
+    lucro:(Number(a.atual||a.pmedio)-Number(a.pmedio))*Number(a.qtd),
+    pct:((Number(a.atual||a.pmedio)-Number(a.pmedio))/Number(a.pmedio))*100, cor:PALETTE[i%PALETTE.length]
   }));
   const totalInvest = carteira.reduce((s,a)=>s+a.vinvest,0);
   const totalAtual  = carteira.reduce((s,a)=>s+a.vatual,0);
@@ -957,9 +760,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
         <StatCard label="Valor Atual"     value={fmt(totalAtual)}/>
         <StatCard label="Resultado"       value={fmt(lucroTotal)} color={lucroTotal>=0?C.accent:C.red} sub={totalInvest>0?fmtPct((lucroTotal/totalInvest)*100):""}/>
       </div>
-
       <div style={{display:"flex",justifyContent:"flex-end"}}><Btn small onClick={()=>setModal(true)}>+ Ativo</Btn></div>
-
       {carteira.length===0
         ?<Card><Empty icon="📈" msg="Carteira vazia" sub="Adicione ações e ETFs para acompanhar"/></Card>
         :<div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -976,7 +777,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
                     <td style={{padding:"11px 14px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <span style={{color:C.text,fontSize:12,fontFamily:"'DM Mono',monospace"}}>R${Number(a.atual||a.pmedio).toFixed(2)}</span>
-                        <button onClick={async()=>{setEditModal(a);setNovoPreco(String(a.atual||a.pmedio));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",color:C.accent,fontSize:10,fontWeight:700}}>✏️</button>
+                        <button onClick={()=>{setEditModal(a);setNovoPreco(String(a.atual||a.pmedio));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:6,padding:"2px 7px",cursor:"pointer",color:C.accent,fontSize:10,fontWeight:700}}>✏️</button>
                       </div>
                     </td>
                     <td style={{padding:"11px 14px",color:C.muted,fontSize:12}}>{fmt(a.vinvest)}</td>
@@ -1002,10 +803,7 @@ function Investimentos({ ativos, setAtivos, loading }) {
                   {carteira.map((a,i)=>(
                     <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:a.cor,flexShrink:0}}/><span style={{color:C.muted,fontSize:12}}>{a.ticker}</span></div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{color:C.text,fontSize:12,fontWeight:700}}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</div>
-                        <div style={{color:C.muted,fontSize:10}}>{fmt(a.vatual)}</div>
-                      </div>
+                      <div style={{textAlign:"right"}}><div style={{color:C.text,fontSize:12,fontWeight:700}}>{totalAtual>0?((a.vatual/totalAtual)*100).toFixed(1):0}%</div><div style={{color:C.muted,fontSize:10}}>{fmt(a.vatual)}</div></div>
                     </div>
                   ))}
                 </div>
@@ -1014,27 +812,23 @@ function Investimentos({ ativos, setAtivos, loading }) {
           )}
         </div>
       }
-
-      {/* Modal novo ativo */}
       {modal&&(
         <Modal title="Novo Ativo" onClose={()=>setModal(false)}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <InputField label="Ticker (Ação ou ETF)" value={form.ticker} onChange={f("ticker")} placeholder="Ex: PETR4, BOVA11, IVVB11"/>
+            <InputField label="Ticker (Ação ou ETF)" value={form.ticker} onChange={f("ticker")} placeholder="Ex: PETR4, BOVA11"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <InputField label="Quantidade" value={form.qtd}    onChange={f("qtd")}    type="number" placeholder="0"/>
+              <InputField label="Quantidade" value={form.qtd} onChange={f("qtd")} type="number" placeholder="0"/>
               <InputField label="Preço Médio" value={form.pmedio} onChange={f("pmedio")} type="number" placeholder="0,00"/>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
               <div style={{flex:1}}><InputField label="Preço Atual (opcional)" value={form.atual} onChange={f("atual")} type="number" placeholder="Vazio = igual ao médio"/></div>
-              <Btn small outline onClick={async()=>{ if(!form.ticker) return; const p=await buscarCotacao(form.ticker); if(p) f("atual")(p); else alert("Cotação não encontrada. Verifique o ticker."); }}>{cotando?"...":"🔄 Buscar"}</Btn>
+              <Btn small outline onClick={async()=>{ if(!form.ticker) return; const p=await buscarCotacao(form.ticker); if(p) f("atual")(p); else alert("Não encontrado."); }}>{cotando?"...":"🔄"}</Btn>
             </div>
-            <InputField label="Setor" value={form.setor} onChange={f("setor")} placeholder="Ex: Energia, FII, ETF"/>
+            <InputField label="Setor" value={form.setor} onChange={f("setor")} placeholder="Ex: Energia, ETF"/>
             <Btn onClick={salvar} full>{saving?"Salvando...":"Salvar"}</Btn>
           </div>
         </Modal>
       )}
-
-      {/* Modal editar preço atual */}
       {editModal&&(
         <Modal title={`Atualizar Preço — ${editModal.ticker}`} onClose={()=>setEditModal(null)}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -1044,9 +838,8 @@ function Investimentos({ ativos, setAtivos, loading }) {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
               <div style={{flex:1}}><InputField label="Novo Preço (R$)" value={novoPreco} onChange={setNovoPreco} type="number" placeholder="0,00"/></div>
-              <Btn small outline onClick={async()=>{ const p=await buscarCotacao(editModal.ticker); if(p) setNovoPreco(p); else alert("Cotação não encontrada."); }}>{cotando?"...":"🔄 Buscar"}</Btn>
+              <Btn small outline onClick={async()=>{ const p=await buscarCotacao(editModal.ticker); if(p) setNovoPreco(p); else alert("Não encontrado."); }}>{cotando?"...":"🔄"}</Btn>
             </div>
-            <div style={{color:C.muted,fontSize:12}}>💡 Clique em "🔄 Buscar" para obter o preço atual via API (ações B3 e ETFs).</div>
             <Btn onClick={salvarPreco} full>{saving?"Salvando...":"Atualizar Preço"}</Btn>
           </div>
         </Modal>
@@ -1057,13 +850,13 @@ function Investimentos({ ativos, setAtivos, loading }) {
 
 // ─── RELATÓRIOS ───────────────────────────────────────────────────────────────
 function Relatorios({ transacoes, ativos, loading }) {
-  const now=new Date(); const mesN=now.getMonth()+1,anoN=now.getFullYear();
+  const now=new Date(); const mesN=now.getMonth()+1, anoN=now.getFullYear();
   const doMes = transacoes.filter(t=>{ const {m,a}=getMesAno(t.data); return m===mesN&&a===anoN; });
   const doAno = transacoes.filter(t=>getMesAno(t.data).a===anoN);
   const recMes  = doMes.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const despMes = doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
-  const recAno  = doAno.filter(t=>t.tipo==="rec").reduce((s,t)=>s+Number(t.valor),0);
-  const despAno = doAno.filter(t=>t.tipo==="desp").reduce((s,t)=>s+Number(t.valor),0);
+  const recAno  = doAno.filter(t=>t.tipo==="rec" &&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
+  const despAno = doAno.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").reduce((s,t)=>s+Number(t.valor),0);
   const catDesp={}; doMes.filter(t=>t.tipo==="desp"&&t.cat!=="Transferência").forEach(t=>{catDesp[t.cat||"Outros"]=(catDesp[t.cat||"Outros"]||0)+Number(t.valor);});
   const topCat=Object.entries(catDesp).sort((a,b)=>b[1]-a[1]);
   const totalAtual  = ativos.reduce((s,a)=>s+Number(a.atual||a.pmedio)*Number(a.qtd),0);
@@ -1083,14 +876,14 @@ function Relatorios({ transacoes, ativos, loading }) {
         <Row label="Despesas"         val={fmt(despMes)} cor={C.red}/>
         <Row label="Resultado"        val={fmt(recMes-despMes)} cor={recMes-despMes>=0?C.accent:C.red}/>
         <Row label="Taxa de Poupança" val={recMes>0?`${(((recMes-despMes)/recMes)*100).toFixed(1)}%`:"—"} cor={C.yellow}/>
-        <Row label="Transações"       val={String(doMes.length)}/>
+        <Row label="Transações"       val={String(doMes.filter(t=>t.cat!=="Transferência").length)}/>
       </Card>
       <Card>
         <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📆 Ano Atual</div>
         <Row label="Receitas"   val={fmt(recAno)}         cor={C.accent}/>
         <Row label="Despesas"   val={fmt(despAno)}        cor={C.red}/>
         <Row label="Resultado"  val={fmt(recAno-despAno)} cor={recAno-despAno>=0?C.accent:C.red}/>
-        <Row label="Transações" val={String(doAno.length)}/>
+        <Row label="Transações" val={String(doAno.filter(t=>t.cat!=="Transferência").length)}/>
       </Card>
       <Card style={{gridColumn:"span 2"}}>
         <div style={{color:C.text,fontWeight:700,marginBottom:14,fontSize:14}}>📊 Investimentos</div>
@@ -1117,26 +910,29 @@ function Relatorios({ transacoes, ativos, loading }) {
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
 function Configuracoes({ cats, setCats, contas, setContas, loading }) {
-  const [tab, setTab]             = useState("contas");
-  const [modalCat, setModalCat]   = useState(null);
-  const [modalSub, setModalSub]   = useState(null);
+  const [tab, setTab]               = useState("contas");
+  const [modalCat, setModalCat]     = useState(null);
+  const [modalSub, setModalSub]     = useState(null);
   const [modalConta, setModalConta] = useState(false);
-  const [nomeCat, setNomeCat]     = useState("");
-  const [nomeSub, setNomeSub]     = useState("");
-  const [saving, setSaving]       = useState(false);
-  const [editSaldo, setEditSaldo] = useState(null);
-  const [novoSaldo, setNovoSaldo] = useState("");
-  const [formConta, setFormConta] = useState({ nome:"", saldo:"", tipo:"Conta Corrente", icon:"🏦", vencimento:"", limite:"" });
+  const [editSaldo, setEditSaldo]   = useState(null);
+  const [novoSaldo, setNovoSaldo]   = useState("");
+  const [nomeCat, setNomeCat]       = useState("");
+  const [nomeSub, setNomeSub]       = useState("");
+  const [saving, setSaving]         = useState(false);
+  const [formConta, setFormConta]   = useState({ nome:"", saldo:"", tipo:"Conta Corrente", icon:"🏦" });
   const fc = k => v => setFormConta(p=>({...p,[k]:v}));
 
   const addCat = async tipo => {
     if (!nomeCat.trim()) return; setSaving(true);
-    const nova = {id:uid(),nome:nomeCat.trim(),subs:[]};
+    const nova = {id:uid(), nome:nomeCat.trim(), subs:[]};
     setCats(p=>({...p,[tipo]:[...p[tipo],nova]}));
-    await db.insert("cats",{...nova,tipo,subs:JSON.stringify([])});
+    await db.insert("cats", {...nova, tipo, subs:JSON.stringify([])});
     setNomeCat(""); setModalCat(null); setSaving(false);
   };
-  const delCat = async (tipo,id) => { setCats(p=>({...p,[tipo]:p[tipo].filter(c=>c.id!==id)})); await db.remove("cats",id); };
+  const delCat = async (tipo,id) => {
+    setCats(p=>({...p,[tipo]:p[tipo].filter(c=>c.id!==id)}));
+    await db.remove("cats",id);
+  };
   const addSub = async (tipo,catId) => {
     if (!nomeSub.trim()) return; setSaving(true);
     const cat=cats[tipo].find(c=>c.id===catId);
@@ -1153,33 +949,25 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
   };
   const addConta = async () => {
     if (!formConta.nome) return; setSaving(true);
-    const nova={
-      id: uid(),
-      nome: formConta.nome,
-      tipo: formConta.tipo,
-      icon: formConta.icon,
-      saldo: Number(formConta.saldo||0),
-      cor: PALETTE[contas.length%PALETTE.length],
-      ...(formConta.vencimento ? { vencimento: Number(formConta.vencimento) } : {}),
-      ...(formConta.limite     ? { limite: Number(formConta.limite) }         : {}),
-    };
-    // Adiciona no estado imediatamente (otimista) e persiste no Supabase
+    const nova = {id:uid(), nome:formConta.nome, tipo:formConta.tipo, icon:formConta.icon, saldo:Number(formConta.saldo||0), cor:PALETTE[contas.length%PALETTE.length]};
     setContas(p=>[...p,nova]);
-    await db.insert("contas",nova);
-    setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦",vencimento:"",limite:""});
+    await db.insert("contas", nova);
+    setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦"});
     setModalConta(false); setSaving(false);
   };
-  const delConta = async id => { setContas(p=>p.filter(c=>c.id!==id)); await db.remove("contas",id); };
+  const delConta = async id => {
+    setContas(p=>p.filter(c=>c.id!==id));
+    await db.remove("contas",id);
+  };
   const salvarSaldo = async () => {
     if (!editSaldo) return; setSaving(true);
-    const ok=await db.update("contas",editSaldo.id,{saldo:Number(novoSaldo)});
-    if (ok) setContas(p=>p.map(c=>c.id===editSaldo.id?{...c,saldo:Number(novoSaldo)}:c));
+    await db.update("contas",editSaldo.id,{saldo:Number(novoSaldo)});
+    setContas(p=>p.map(c=>c.id===editSaldo.id?{...c,saldo:Number(novoSaldo)}:c));
     setEditSaldo(null); setNovoSaldo(""); setSaving(false);
   };
 
-  const TABS = [{id:"contas",label:"Contas",icon:"🏦"},{id:"cartoes",label:"Cartões",icon:"💳"},{id:"cat-desp",label:"Despesas",icon:"📤"},{id:"cat-rec",label:"Receitas",icon:"📥"}];
+  const TABS = [{id:"contas",label:"Contas",icon:"🏦"},{id:"cat-desp",label:"Despesas",icon:"📤"},{id:"cat-rec",label:"Receitas",icon:"📥"}];
   const tipo = tab==="cat-rec"?"rec":"desp";
-  const contasFiltradas = tab==="contas"?contas.filter(c=>c.tipo!=="Cartão Crédito"):contas.filter(c=>c.tipo==="Cartão Crédito");
 
   if (loading) return <Spinner />;
 
@@ -1193,34 +981,23 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
         ))}
       </div>
 
-      {(tab==="contas"||tab==="cartoes")&&(
+      {tab==="contas"&&(
         <>
-          <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <Btn small onClick={()=>{ if(tab==="cartoes") setFormConta(p=>({...p,tipo:"Cartão Crédito",icon:"💳"})); setModalConta(true); }}>+ {tab==="contas"?"Conta":"Cartão"}</Btn>
-          </div>
-          {contasFiltradas.length===0
-            ?<Card><Empty icon={tab==="contas"?"🏦":"💳"} msg={tab==="contas"?"Nenhuma conta":"Nenhum cartão"} sub="Adicione usando o botão acima"/></Card>
-            :contasFiltradas.map(c=>(
+          <div style={{display:"flex",justifyContent:"flex-end"}}><Btn small onClick={()=>setModalConta(true)}>+ Conta</Btn></div>
+          {contas.length===0
+            ?<Card><Empty icon="🏦" msg="Nenhuma conta" sub="Adicione suas contas bancárias"/></Card>
+            :contas.map(c=>(
               <Card key={c.id} style={{borderColor:(c.cor||C.accent)+"44"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{display:"flex",alignItems:"center",gap:12}}>
                     <div style={{width:44,height:44,background:(c.cor||C.accent)+"22",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{c.icon}</div>
-                    <div>
-                      <div style={{color:C.text,fontWeight:700,fontSize:15}}>{c.nome}</div>
-                      <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
-                        <Badge color={c.cor||C.accent}>{c.tipo}</Badge>
-                        {c.vencimento&&<Badge color={C.yellow}>Vence dia {c.vencimento}</Badge>}
-                        {c.limite&&<Badge color={C.blue}>Limite {fmt(c.limite)}</Badge>}
-                      </div>
-                    </div>
+                    <div><div style={{color:C.text,fontWeight:700,fontSize:15}}>{c.nome}</div><Badge color={c.cor||C.accent}>{c.tipo}</Badge></div>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-                    {c.tipo!=="Cartão Crédito"&&(
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{color:c.cor||C.accent,fontSize:20,fontWeight:900,fontFamily:"'DM Mono',monospace"}}>{fmt(c.saldo)}</div>
-                        <button onClick={()=>{setEditSaldo(c);setNovoSaldo(String(c.saldo));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",color:C.accent,fontSize:11,fontWeight:700}}>✏️ Editar</button>
-                      </div>
-                    )}
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{color:c.cor||C.accent,fontSize:18,fontWeight:900,fontFamily:"'DM Mono',monospace"}}>{fmt(c.saldo)}</div>
+                      <button onClick={()=>{setEditSaldo(c);setNovoSaldo(String(c.saldo));}} style={{background:C.accentDim,border:`1px solid ${C.accentGlow}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",color:C.accent,fontSize:11,fontWeight:700}}>✏️</button>
+                    </div>
                     <button onClick={()=>delConta(c.id)} style={{background:C.red+"18",border:`1px solid ${C.red}33`,color:C.red,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Remover</button>
                   </div>
                 </div>
@@ -1262,29 +1039,16 @@ function Configuracoes({ cats, setCats, contas, setContas, loading }) {
         </>
       )}
 
-      {/* Modais */}
       {modalCat&&<Modal title={`Nova Categoria — ${modalCat==="rec"?"Receita":"Despesa"}`} onClose={()=>{setModalCat(null);setNomeCat("");}}><div style={{display:"flex",flexDirection:"column",gap:14}}><InputField label="Nome" value={nomeCat} onChange={setNomeCat} placeholder="Ex: Moradia"/><Btn onClick={()=>addCat(modalCat)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
       {modalSub&&<Modal title={`Nova Subcategoria — ${cats[modalSub.tipo].find(c=>c.id===modalSub.catId)?.nome}`} onClose={()=>{setModalSub(null);setNomeSub("");}}><div style={{display:"flex",flexDirection:"column",gap:14}}><InputField label="Nome" value={nomeSub} onChange={setNomeSub} placeholder="Ex: Aluguel"/><Btn onClick={()=>addSub(modalSub.tipo,modalSub.catId)} full>{saving?"Salvando...":"Adicionar"}</Btn></div></Modal>}
-
-      {editSaldo&&(
-        <Modal title={`Editar Saldo — ${editSaldo.nome}`} onClose={()=>setEditSaldo(null)}>
-          <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <InputField label="Novo Saldo (R$)" value={novoSaldo} onChange={setNovoSaldo} type="number" placeholder="0,00"/>
-            <Btn onClick={salvarSaldo} full>{saving?"Salvando...":"Salvar Saldo"}</Btn>
-          </div>
-        </Modal>
-      )}
-
+      {editSaldo&&(<Modal title={`Editar Saldo — ${editSaldo.nome}`} onClose={()=>setEditSaldo(null)}><div style={{display:"flex",flexDirection:"column",gap:14}}><InputField label="Novo Saldo (R$)" value={novoSaldo} onChange={setNovoSaldo} type="number" placeholder="0,00"/><Btn onClick={salvarSaldo} full>{saving?"Salvando...":"Salvar"}</Btn></div></Modal>)}
       {modalConta&&(
-        <Modal title={formConta.tipo==="Cartão Crédito"?"Novo Cartão":"Nova Conta"} onClose={()=>{setModalConta(false);setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦",vencimento:"",limite:""});}}>
+        <Modal title="Nova Conta" onClose={()=>{setModalConta(false);setFormConta({nome:"",saldo:"",tipo:"Conta Corrente",icon:"🏦"});}}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <InputField label="Nome" value={formConta.nome} onChange={fc("nome")} placeholder="Ex: Nubank"/>
-            <InputField label="Tipo" value={formConta.tipo} onChange={fc("tipo")} options={["Conta Corrente","Poupança","Corretora","Carteira","Cartão Crédito"]}/>
+            <InputField label="Tipo" value={formConta.tipo} onChange={fc("tipo")} options={["Conta Corrente","Poupança","Corretora","Carteira"]}/>
             <InputField label="Emoji" value={formConta.icon} onChange={fc("icon")} placeholder="🏦"/>
-            {formConta.tipo!=="Cartão Crédito"
-              ?<InputField label="Saldo Inicial (R$)" value={formConta.saldo} onChange={fc("saldo")} type="number" placeholder="0,00"/>
-              :<><InputField label="Dia de Vencimento" value={formConta.vencimento} onChange={fc("vencimento")} type="number" placeholder="Ex: 10"/><InputField label="Limite (R$)" value={formConta.limite} onChange={fc("limite")} type="number" placeholder="0,00"/></>
-            }
+            <InputField label="Saldo Inicial (R$)" value={formConta.saldo} onChange={fc("saldo")} type="number" placeholder="0,00"/>
             <Btn onClick={addConta} full>{saving?"Salvando...":"Salvar"}</Btn>
           </div>
         </Modal>
@@ -1304,29 +1068,24 @@ const NAV = [
 ];
 
 export default function App() {
-  const [screen, setScreen]               = useState("dashboard");
-  const [transacoes, setTransacoes]       = useState([]);
-  const [contas, setContas]               = useState([]);
-  const [ativos, setAtivos]               = useState([]);
-  const [cats, setCats]                   = useState(DEFAULT_CATS);
-  const [cartaoCompras, setCartaoCompras] = useState([]);
-  const [cartaoPagamentos, setCartaoPagamentos] = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const isDesktop                         = useIsDesktop();
+  const [screen, setScreen]         = useState("dashboard");
+  const [transacoes, setTransacoes] = useState([]);
+  const [contas, setContas]         = useState([]);
+  const [ativos, setAtivos]         = useState([]);
+  const [cats, setCats]             = useState(DEFAULT_CATS);
+  const [loading, setLoading]       = useState(true);
+  const isDesktop                   = useIsDesktop();
 
   useEffect(()=>{
     async function fetchAll() {
       setLoading(true);
       try {
-        const [t,c,a,ct,cc,cp] = await Promise.all([
-          db.get("transacoes"), db.get("contas"), db.get("ativos"),
-          db.get("cats"), db.get("cartao_compras"), db.get("cartao_pagamentos"),
+        const [t,c,a,ct] = await Promise.all([
+          db.get("transacoes"), db.get("contas"), db.get("ativos"), db.get("cats"),
         ]);
         setTransacoes(t||[]);
         setContas(c||[]);
         setAtivos(a||[]);
-        setCartaoCompras(cc||[]);
-        setCartaoPagamentos(cp||[]);
         if (ct?.length>0) {
           const rebuilt={rec:[],desp:[]};
           ct.forEach(row=>{ if(row.tipo==="rec"||row.tipo==="desp") rebuilt[row.tipo].push({id:row.id,nome:row.nome,subs:Array.isArray(row.subs)?row.subs:(typeof row.subs==="string"?JSON.parse(row.subs):[])}); });
@@ -1339,49 +1098,40 @@ export default function App() {
   },[]);
 
   const cur   = NAV.find(n=>n.id===screen);
-  const props = { transacoes, contas, ativos, cats, cartaoCompras, cartaoPagamentos, loading };
+  const props = { transacoes, contas, ativos, cats, loading };
 
   const renderScreen = () => {
     switch(screen) {
-      case "dashboard":     return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas} setCartaoPagamentos={setCartaoPagamentos}/>;
-      case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes} setCartaoCompras={setCartaoCompras}/>;
+      case "dashboard":     return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas}/>;
+      case "transacoes":    return <Transacoes    {...props} setTransacoes={setTransacoes}/>;
       case "patrimonio":    return <Patrimonio    {...props}/>;
       case "investimentos": return <Investimentos {...props} setAtivos={setAtivos}/>;
       case "relatorios":    return <Relatorios    {...props}/>;
       case "config":        return <Configuracoes {...props} setCats={setCats} setContas={setContas}/>;
-      default:              return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas} setCartaoPagamentos={setCartaoPagamentos}/>;
+      default:              return <Dashboard     {...props} setTransacoes={setTransacoes} setContas={setContas}/>;
     }
   };
 
   const styles = `
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500;700&display=swap');
     * { box-sizing:border-box; margin:0; padding:0; }
-    .grid-2col { grid-template-columns: 1fr 1fr; }
-    .grid-3col { grid-template-columns: repeat(3,1fr); }
-    @media (max-width: 640px) {
-      .grid-2col { grid-template-columns: 1fr !important; }
-      .grid-3col { grid-template-columns: 1fr 1fr !important; }
-      .hide-mobile { display: none !important; }
-    }
-    .grid-2col { grid-template-columns: 1fr 1fr; }
-    .grid-3col { grid-template-columns: repeat(3,1fr); }
-    @media (max-width: 640px) {
-      .grid-2col { grid-template-columns: 1fr !important; }
-      .grid-3col { grid-template-columns: 1fr 1fr !important; }
-      .hide-mobile { display: none !important; }
-    }
     input,select { color-scheme:dark; }
     input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
     ::-webkit-scrollbar { width:6px; height:6px; }
     ::-webkit-scrollbar-track { background:transparent; }
     ::-webkit-scrollbar-thumb { background:${C.border}; border-radius:3px; }
+    .grid-2col { grid-template-columns: 1fr 1fr; }
+    .grid-3col { grid-template-columns: repeat(3,1fr); }
+    @media (max-width: 640px) {
+      .grid-2col { grid-template-columns: 1fr !important; }
+      .grid-3col { grid-template-columns: 1fr 1fr !important; }
+    }
     button { transition:all 0.15s; }
     button:active { opacity:0.7; }
     input:focus,select:focus { border-color:${C.accent} !important; outline:none; }
     @keyframes spin { to { transform:rotate(360deg); } }
   `;
 
-  // ── DESKTOP ──
   if (isDesktop) return (
     <div style={{display:"flex",height:"100vh",background:C.bg,fontFamily:"'Outfit','DM Sans',sans-serif",color:C.text,overflow:"hidden"}}>
       <div style={{width:240,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",flexShrink:0,height:"100vh"}}>
@@ -1392,13 +1142,12 @@ export default function App() {
           </div>
         </div>
         <nav style={{flex:1,padding:"12px 10px",display:"flex",flexDirection:"column",gap:2,overflowY:"auto"}}>
-          {NAV.map(n=>{
-            const active=screen===n.id;
-            return <button key={n.id} onClick={()=>setScreen(n.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",width:"100%",textAlign:"left",background:active?C.accentDim:"transparent",borderLeft:`3px solid ${active?C.accent:"transparent"}`,fontFamily:"inherit"}}>
+          {NAV.map(n=>{ const active=screen===n.id; return (
+            <button key={n.id} onClick={()=>setScreen(n.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",width:"100%",textAlign:"left",background:active?C.accentDim:"transparent",borderLeft:`3px solid ${active?C.accent:"transparent"}`,fontFamily:"inherit"}}>
               <span style={{fontSize:18,lineHeight:1,opacity:active?1:0.6}}>{n.icon}</span>
               <div><div style={{color:active?C.accent:C.text,fontWeight:active?700:500,fontSize:13}}>{n.label}</div><div style={{color:C.muted,fontSize:10,marginTop:1}}>{n.desc}</div></div>
-            </button>;
-          })}
+            </button>
+          ); })}
         </nav>
         <div style={{padding:"16px 20px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(135deg, ${C.purple}, ${C.blue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff"}}>L</div>
@@ -1417,7 +1166,6 @@ export default function App() {
     </div>
   );
 
-  // ── MOBILE ──
   return (
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Outfit','DM Sans',sans-serif",color:C.text,display:"flex",flexDirection:"column",maxWidth:640,margin:"0 auto"}}>
       <div style={{position:"sticky",top:0,zIndex:50,background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"12px 18px",gap:10}}>
