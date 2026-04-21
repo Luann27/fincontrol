@@ -365,7 +365,7 @@ function Dashboard({ transacoes, contas, ativos, setTransacoes, setContas, loadi
   );
 }
 
- ───────────────────────────────────────────────────────────────
+// ─── TRANSAÇÕES ───────────────────────────────────────────────────────────────
 function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
   const [tab, setTab]           = useState("lancamentos");
   const [modal, setModal]       = useState(false);  // false | "novo" | objeto (editar)
@@ -496,7 +496,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
 
       </div>
 
-      {/* ── Tab: Lançamentos ── */}
+// {/* ── Tab: Lançamentos ── */}
       {tab==="lancamentos"&&(
         listaFin.length===0
           ?<Card><Empty icon="💰" msg="Nenhum lançamento" sub="Toque em '+ Novo' para adicionar"/></Card>
@@ -543,7 +543,7 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
           </div>
       )}
 
-      {/* ── Tab: Transferências ── */}
+// {/* ── Tab: Transferências ── */}
       {tab==="transf"&&(
         transferencias.length===0
           ?<Card><Empty icon="🔄" msg="Nenhuma transferência" sub="Transferências entre contas não afetam receitas nem despesas"/></Card>
