@@ -578,6 +578,47 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
           </div>
       )}
 
+      {/* Modal novo/editar lançamento */}
+      {modal&&(
+        <Modal title={modoEditar?"Editar Lançamento":form.tipo==="transf"?"Nova Transferência":"Novo Lançamento"} onClose={()=>{setModal(false);setForm(formVazio);}}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {!modoEditar&&(
+              <div style={{display:"flex",gap:6}}>
+                {[["rec","📥 Receita",C.accent],["desp","📤 Despesa",C.red],["transf","🔄 Transferência",C.blue]].map(([tp,label,cor])=>(
+                  <button key={tp} onClick={()=>f("tipo")(tp)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",fontWeight:700,fontSize:11,background:form.tipo===tp?cor:C.surface,color:form.tipo===tp?C.bg:C.muted,fontFamily:"inherit"}}>{label}</button>
+                ))}
+              </div>
+            )}
+            {form.tipo==="transf" ? (
+              <>
+                <InputField label="Descrição (opcional)" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Reserva de emergência"/>
+                <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
+                <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
+                <InputField label="Conta de Origem" value={form.conta} onChange={f("conta")} options={contaOpts}/>
+                <InputField label="Conta de Destino" value={form.contaDestino||""} onChange={f("contaDestino")} options={contaOpts}/>
+                <Btn onClick={salvar} full color={C.blue}>{saving?"Salvando...":"Registrar Transferência"}</Btn>
+              </>
+            ) : (
+              <>
+                <InputField label="Descrição" value={form.descricao} onChange={f("descricao")} placeholder="Ex: Supermercado"/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <InputField label="Valor (R$)" value={form.valor} onChange={f("valor")} type="number" placeholder="0,00"/>
+                  <InputField label="Data" value={form.data} onChange={f("data")} type="date"/>
+                </div>
+                <InputField label="Categoria" value={form.cat} onChange={v=>{f("cat")(v);f("subcat")("");}} options={catOpts.length?catOpts:["(configure em ⚙️)"]}/>
+                {subsDisponiveis.length>0&&<InputField label="Subcategoria" value={form.subcat} onChange={f("subcat")} options={subsDisponiveis}/>}
+                {contaOpts.length>0&&<InputField label="Conta" value={form.conta} onChange={f("conta")} options={contaOpts}/>}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <InputField label="Status" value={form.status} onChange={f("status")} options={["pago","pendente"]}/>
+                  <InputField label="Recorrência" value={form.recorrencia} onChange={f("recorrencia")} options={["nenhuma","mensal","semanal","anual"]}/>
+                </div>
+                <Btn onClick={salvar} full>{saving?"Salvando...":modoEditar?"Salvar Alterações":"Salvar Lançamento"}</Btn>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
+
     </div>
   );
 }
