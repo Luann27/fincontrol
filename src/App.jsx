@@ -496,7 +496,6 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
 
       </div>
 
-// {/* ── Tab: Lançamentos ── */}
       {tab==="lancamentos"&&(
         listaFin.length===0
           ?<Card><Empty icon="💰" msg="Nenhum lançamento" sub="Toque em '+ Novo' para adicionar"/></Card>
@@ -543,7 +542,6 @@ function Transacoes({ transacoes, setTransacoes, contas, cats, loading }) {
           </div>
       )}
 
-// {/* ── Tab: Transferências ── */}
       {tab==="transf"&&(
         transferencias.length===0
           ?<Card><Empty icon="🔄" msg="Nenhuma transferência" sub="Transferências entre contas não afetam receitas nem despesas"/></Card>
